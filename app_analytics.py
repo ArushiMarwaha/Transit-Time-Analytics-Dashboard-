@@ -665,6 +665,7 @@ def main():
     # INTERCEPT AND PROCESS THE STITCHED RAW ASSET VIA THE MID-LAYER GATEWAY
     try:
         df_fetched = master_dashboard_data_gateway(df_raw)
+ >> final_patch.py && echo # --- DEFENSIVE DATA INTEGRITY GUARD CLAUSE --- >> final_patch.py && echo if df_fetched.empty or len(df_fetched) == 0: >> final_patch.py && echo     st.warning("||| No matching overlapping telemetry logs found for the selected timeline.") >> final_patch.py && echo     st.info("||| Try changing the 'Analytical Aggregation Horizon' in the sidebar to a rolling timeframe (like 15-Day or 30-Day Trends) to compile structural profiles.") >> final_patch.py && echo     return >> final_patch.py && echo 
 
         # Defensive fallbacks only -- the gateway already normalizes these columns;
         # these guards simply protect against any edge-case schema drift in the
