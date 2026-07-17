@@ -2030,7 +2030,7 @@ def main():
                 sns.barplot(data=df_struct, x='shapefile_segment_name', y='delta_lanes', color='#E11D48', ax=ax_l)
                 ax_l.set_xticklabels(ax_l.get_xticklabels(), rotation=45, ha='right', fontsize=8)
                 ax_l.set_xlabel("Segment Path (Downstream Sequence)", color='#0F172A', fontsize=9, fontweight='bold')
-                ax_l.set_ylabel(rr"Physical Lane Drops ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
+                ax_l.set_ylabel(r"Physical Lane Drops ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
                 
             ax_l.set_ylabel("Peak-Hour Travel Time Index" if selected_corridor == "All Corridors" else "Lane Drop Severity", color='#0F172A', fontsize=9, fontweight='bold')
             ax_l.grid(axis='y', linestyle=':', alpha=0.4)
