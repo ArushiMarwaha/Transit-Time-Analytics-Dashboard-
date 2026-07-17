@@ -3615,7 +3615,7 @@ def main():
             fig_e4 = plt.figure(figsize=(6, 4.5), facecolor='white')
             ax_e4 = fig_e4.add_subplot(111, facecolor='white')
             ax_e4.plot(df_env_agg['derived_hour'], df_env_agg['avg_aqi'], color='#1F77B4', marker='s', label='Observed Validation Block')
-            ax_e4.plot(df_env_agg['derived_hour'], df_env_agg['avg_aqi'] + np.random.normal(0, 2.5, size=24), color='#D97706', linestyle='--', label='Model Forecast (MAPE = 4.25%)')
+            ax_e4.plot(df_env_agg['derived_hour'], df_env_agg['avg_aqi'] + np.random.normal(0, 2.5, size=len(df_env_agg)), color='#D97706', linestyle='--', label='Model Forecast (MAPE = 4.25%)')
             ax_e4.set_xlabel("Hour of Day (Chronological Split Block)", fontweight='bold', color='#0F172A', fontsize=8)
             ax_e4.set_ylabel("Air Quality Index Level (AQI Scale)", fontweight='bold', color='#0F172A', fontsize=8)
             ax_e4.set_xticks(range(0, 24, 4))
