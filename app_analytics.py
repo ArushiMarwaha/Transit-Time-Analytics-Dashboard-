@@ -46,7 +46,7 @@ def master_dashboard_data_gateway(df: pd.DataFrame) -> pd.DataFrame:
     # --------------------------------──────────────────────────────────────────
     # CASE A: RAW UPSTREAM API TELEMETRY DATA (e.g., roads_results.csv)
     # ----------------------------------------------------------------──────────
-    if 'timestamp_utc' in df.columns or 'snapped_points' in df.columns:
+    if 'timestamp_utc' in df.columns or 'snapped_points' in df.columns or 'travel_time_seconds' in df.columns:
         st.info("🔄 Raw Automation Pipeline Structure Identified. Executing data schema translation...")
         
         # 1. Standardize Timestamps, Localize UTC → IST, then Create Core Temporal Classes
@@ -665,6 +665,13 @@ def main():
     # INTERCEPT AND PROCESS THE STITCHED RAW ASSET VIA THE MID-LAYER GATEWAY
     try:
         df_fetched = master_dashboard_data_gateway(df_raw)
+
+    # --- AUTOMATED WORKSPACE PROTECTION LAYER ---
+    if df_fetched is None or df_fetched.empty:
+        st.warning("⚠️ No matching overlapping telemetry logs found for the selected timeline.")
+        st.info("💡 Try changing the 'Analytical Aggregation Horizon' in the sidebar to a rolling timeframe (like 15-Day Trends).")
+        return
+
  
 
         # Defensive fallbacks only -- the gateway already normalizes these columns;
@@ -3645,15 +3652,3 @@ if __name__ == "__main__":
     main()
 
 
-# --- AUTOMATED WORKSPACE PROTECTION LAYER ---
-import sys
-original_gateway = master_dashboard_data_gateway
-def master_dashboard_data_gateway_safe(df):
-    res = original_gateway(df)
-    if res is None or res.empty:
-        import streamlit as st
-        st.warning("?? No overlapping telemetry logs found for the selected horizon.")
-        st.info("?? Please select a broader time window (like 15-Day or 30-Day Rolling Trends) in the sidebar to populate data indices.")
-        st.stop()
-    return res
-master_dashboard_data_gateway = master_dashboard_data_gateway_safe
