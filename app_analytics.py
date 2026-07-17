@@ -131,7 +131,7 @@ def master_dashboard_data_gateway(df: pd.DataFrame) -> pd.DataFrame:
             df['wind_speed_10m'] = np.random.uniform(3.0, 14.0, size=len(df))
             
         if 'precipitation_intensity_mm_h' not in df.columns:
-            df['precipitation_intensity_mm_h'] = np.random.choice([0.0, 3.5], size=len(df), p=[0.9, 0.15])
+            df['precipitation_intensity_mm_h'] = np.random.choice([0.0, 3.5], size=len(df), p=[0.85, 0.15])
 
         # 6. Static Layout Properties Fallbacks for Structural Hypotheses
         if 'road_width_lanes' not in df.columns:
