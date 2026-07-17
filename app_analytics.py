@@ -2023,12 +2023,12 @@ def main():
             # Use boxplot for "All Corridors" and a detailed barplot/pointplot if deep-diving a single corridor
             if selected_corridor == "All Corridors":
                 sns.boxplot(data=df_struct, x='delta_lanes', y='mean_peak_tti', color='#1F77B4', ax=ax_l, width=0.4)
-                ax_l.set_xlabel("Downstream Lane Drop Delta ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
+                ax_l.set_xlabel(r"Downstream Lane Drop Delta ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
             else:
                 sns.barplot(data=df_struct, x='shapefile_segment_name', y='delta_lanes', color='#E11D48', ax=ax_l)
                 ax_l.set_xticklabels(ax_l.get_xticklabels(), rotation=45, ha='right', fontsize=8)
                 ax_l.set_xlabel("Segment Path (Downstream Sequence)", color='#0F172A', fontsize=9, fontweight='bold')
-                ax_l.set_ylabel("Physical Lane Drops ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
+                ax_l.set_ylabel(r"Physical Lane Drops ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
                 
             ax_l.set_ylabel("Peak-Hour Travel Time Index" if selected_corridor == "All Corridors" else "Lane Drop Severity", color='#0F172A', fontsize=9, fontweight='bold')
             ax_l.grid(axis='y', linestyle=':', alpha=0.4)
