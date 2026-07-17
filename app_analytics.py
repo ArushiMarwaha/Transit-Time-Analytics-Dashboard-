@@ -16,6 +16,8 @@ import requests
 import io
 from datetime import date, timedelta
 from typing import Optional
+import warnings
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 # =============================================================================
 # 0. GLOBAL GITHUB DATA REPOSITORY CONFIGURATION
