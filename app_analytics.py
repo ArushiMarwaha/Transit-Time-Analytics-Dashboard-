@@ -2023,12 +2023,12 @@ def main():
             # Use boxplot for "All Corridors" and a detailed barplot/pointplot if deep-diving a single corridor
             if selected_corridor == "All Corridors":
                 sns.boxplot(data=df_struct, x='delta_lanes', y='mean_peak_tti', color='#1F77B4', ax=ax_l, width=0.4)
-                ax_l.set_xlabel(r"Downstream Lane Drop Delta ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
+                ax_l.set_xlabel(rr"Downstream Lane Drop Delta ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
             else:
                 sns.barplot(data=df_struct, x='shapefile_segment_name', y='delta_lanes', color='#E11D48', ax=ax_l)
                 ax_l.set_xticklabels(ax_l.get_xticklabels(), rotation=45, ha='right', fontsize=8)
                 ax_l.set_xlabel("Segment Path (Downstream Sequence)", color='#0F172A', fontsize=9, fontweight='bold')
-                ax_l.set_ylabel(r"Physical Lane Drops ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
+                ax_l.set_ylabel(rr"Physical Lane Drops ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
                 
             ax_l.set_ylabel("Peak-Hour Travel Time Index" if selected_corridor == "All Corridors" else "Lane Drop Severity", color='#0F172A', fontsize=9, fontweight='bold')
             ax_l.grid(axis='y', linestyle=':', alpha=0.4)
@@ -2678,7 +2678,7 @@ def main():
                 t_sp = np.linspace(hourly_v['mu_tti'].min(), hourly_v['mu_tti'].max(), 100)
                 ax_ols.plot(t_sp, np.exp(beta_c[0] + beta_c[1]*np.log(t_sp) + beta_c[2]*hourly_v['sd'].median()), color='#991B1B', linewidth=2)
                 ax_ols.set_xlabel("Mean Congestion (TTI)", color='#0F172A', fontweight='bold', fontsize=8)
-                ax_ols.set_ylabel("Variance ($\sigma^2$)", color='#0F172A', fontweight='bold', fontsize=8)
+                ax_ols.set_ylabel(r"Variance ($\sigma^2$)", color='#0F172A', fontweight='bold', fontsize=8)
                 style_axes(ax_ols)
                 st.pyplot(fig_ols)
                 st.caption(f"Elasticity Fit Parameter ($\beta_1$): {beta_c[1]:.4f}")
@@ -3605,7 +3605,7 @@ def main():
             ax_e3 = fig_e3.add_subplot(111, facecolor='white')
             s_imp = pd.DataFrame({'Variable Feature': ['Precipitation Washout', 'Wind Dispersion', 'Travel Time Index (TTI)', 'Hour Block Index'], 'Mean Absolute SHAP Value': [0.07, 0.21, 0.46, 0.26]}).sort_values(by='Mean Absolute SHAP Value')
             ax_e3.barh(s_imp['Variable Feature'], s_imp['Mean Absolute SHAP Value'], color='#475569', height=0.5, edgecolor='black')
-            ax_e3.set_xlabel("Mean Absolute Game-Theoretic Contribution Score ($|\phi_i|$)", fontweight='bold', color='#0F172A', fontsize=8)
+            ax_e3.set_xlabel(r"Mean Absolute Game-Theoretic Contribution Score ($|\phi_i|$)", fontweight='bold', color='#0F172A', fontsize=8)
             ax_e3.grid(True, linestyle=':', alpha=0.4, color='#CBD5E1')
             style_axes(ax_e3)
             st.pyplot(fig_e3)
