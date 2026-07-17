@@ -3643,3 +3643,17 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# --- AUTOMATED WORKSPACE PROTECTION LAYER ---
+import sys
+original_gateway = master_dashboard_data_gateway
+def master_dashboard_data_gateway_safe(df):
+    res = original_gateway(df)
+    if res is None or res.empty:
+        import streamlit as st
+        st.warning("?? No overlapping telemetry logs found for the selected horizon.")
+        st.info("?? Please select a broader time window (like 15-Day or 30-Day Rolling Trends) in the sidebar to populate data indices.")
+        st.stop()
+    return res
+master_dashboard_data_gateway = master_dashboard_data_gateway_safe
