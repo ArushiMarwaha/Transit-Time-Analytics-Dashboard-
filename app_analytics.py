@@ -238,18 +238,45 @@ def _fetch_segments_ref() -> Optional[pd.DataFrame]:
     return _local_get_csv(SEGMENTS_REF_LOCAL_PATH)
 
 
+def _collapse_to_one_row_per_segment(df: pd.DataFrame) -> pd.DataFrame:
+    """`roads_results` is written by the automation pipeline as a repeated,
+    timestamped snapshot log (every `segment_uid` reappears once per capture
+    cycle -- dozens to hundreds of rows per segment), NOT one row per segment.
+    Left-joining that raw log onto the routes data on `segment_uid` alone is a
+    many-to-many merge: it silently multiplies every route row by however many
+    snapshot rows exist for its segment, which can blow a ~12k-row day into
+    over a million rows (and several GB of memory) and crash the app the
+    instant real data is loaded. This collapses it back down to a genuine
+    one-row-per-segment static table -- keeping the most recent snapshot per
+    segment_uid -- before it's used as a reference join target."""
+    if df is None or 'segment_uid' not in df.columns:
+        return df
+    if not df['segment_uid'].duplicated().any():
+        return df
+    if 'timestamp_utc' in df.columns:
+        sort_col = pd.to_datetime(df['timestamp_utc'], format='mixed', errors='coerce')
+        df = df.assign(_sort_ts=sort_col).sort_values('_sort_ts')
+        df = df.drop_duplicates(subset='segment_uid', keep='last').drop(columns=['_sort_ts'])
+    else:
+        df = df.drop_duplicates(subset='segment_uid', keep='last')
+    return df.reset_index(drop=True)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_roads_results() -> Optional[pd.DataFrame]:
     """Static roads/geometry reference table (roads_results) -- per the latest
-    infrastructure layout this is now a single static asset (speed_limits,
-    road_types, snapped_points, etc.), not a rolling daily time-series. Fetched
-    once at boot and cached, identically to segments_ref. Falls back to the
-    local `data_store/roads_results.csv` mirror whenever the GitHub raw
-    endpoint isn't reachable."""
+    infrastructure layout this is meant to be a single static asset
+    (speed_limits, road_types, snapped_points, etc.), not a rolling daily
+    time-series. Fetched once at boot and cached, identically to segments_ref.
+    Falls back to the local `data_store/roads_results.csv` mirror whenever the
+    GitHub raw endpoint isn't reachable. The source file is collapsed to one
+    row per segment_uid in case the upstream export is actually a repeated
+    snapshot log rather than a true static table (see
+    `_collapse_to_one_row_per_segment`) -- this guards against a many-to-many
+    merge blowup downstream regardless of which shape the file arrives in."""
     remote_df = _http_get_csv(ROADS_RESULTS_URL)
-    if remote_df is not None:
-        return remote_df
-    return _local_get_csv(ROADS_RESULTS_LOCAL_PATH)
+    roads_df = remote_df if remote_df is not None else _local_get_csv(ROADS_RESULTS_LOCAL_PATH)
+    return _collapse_to_one_row_per_segment(roads_df)
 
 
 def _asof_join_environmental(base_df: pd.DataFrame, time_col: str, env_df: pd.DataFrame, env_cols: list) -> pd.DataFrame:
