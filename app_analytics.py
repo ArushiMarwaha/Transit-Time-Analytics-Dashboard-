@@ -172,6 +172,16 @@ ROUTES_RESULTS_DIR_URL = f"{GITHUB_RAW_BASE_URL}/routes_results"
 WEATHER_RESULTS_DIR_URL = f"{GITHUB_RAW_BASE_URL}/weather_results"
 AQI_RESULTS_DIR_URL = f"{GITHUB_RAW_BASE_URL}/aqi_results"
 
+# Local-disk mirrors of the same layout, used as the fallback ingestion trail
+# whenever the GitHub raw endpoint 404s (e.g. the automation pipeline hasn't
+# pushed the day's export yet, but it does exist locally in the workspace).
+LOCAL_DATA_STORE_DIR = "data_store"
+SEGMENTS_REF_LOCAL_PATH = os.path.join(LOCAL_DATA_STORE_DIR, "segments_ref.csv")
+ROADS_RESULTS_LOCAL_PATH = os.path.join(LOCAL_DATA_STORE_DIR, "roads_results.csv")
+ROUTES_RESULTS_LOCAL_DIR = os.path.join(LOCAL_DATA_STORE_DIR, "routes_results")
+WEATHER_RESULTS_LOCAL_DIR = os.path.join(LOCAL_DATA_STORE_DIR, "weather_results")
+AQI_RESULTS_LOCAL_DIR = os.path.join(LOCAL_DATA_STORE_DIR, "aqi_results")
+
 # Strict as-of join tolerance for binding the ~3-hourly environmental frames
 # (weather_results / aqi_results) onto the cycle-by-cycle routes_results rows.
 # If the environmental pipeline has an outage longer than this window, rows
@@ -198,11 +208,34 @@ def _http_get_csv(file_url: str) -> Optional[pd.DataFrame]:
         return None
 
 
+def _local_get_csv(local_path: str) -> Optional[pd.DataFrame]:
+    """Fetch one CSV directly off local disk (e.g. the `data_store/` folder
+    inside the current repo/Codespace workspace). Returns None (never raises)
+    on any failure -- missing file, permissions error, or malformed/empty
+    payload -- exactly mirroring the failure contract of `_http_get_csv` so
+    callers can treat both sources interchangeably."""
+    try:
+        if not os.path.isfile(local_path):
+            return None
+        parsed_df = pd.read_csv(local_path)
+        if parsed_df.empty:
+            return None
+        parsed_df.columns = parsed_df.columns.str.strip().str.lower()
+        return parsed_df
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
+        return None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_segments_ref() -> Optional[pd.DataFrame]:
     """Static spatial/infrastructure reference table (segments_ref) -- fetched
-    once at boot and cached, since it does not change on a daily cadence."""
-    return _http_get_csv(SEGMENTS_REF_URL)
+    once at boot and cached, since it does not change on a daily cadence.
+    Falls back to the local `data_store/segments_ref.csv` mirror whenever the
+    GitHub raw endpoint isn't reachable (404, not yet pushed, offline, etc.)."""
+    remote_df = _http_get_csv(SEGMENTS_REF_URL)
+    if remote_df is not None:
+        return remote_df
+    return _local_get_csv(SEGMENTS_REF_LOCAL_PATH)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -210,8 +243,13 @@ def _fetch_roads_results() -> Optional[pd.DataFrame]:
     """Static roads/geometry reference table (roads_results) -- per the latest
     infrastructure layout this is now a single static asset (speed_limits,
     road_types, snapped_points, etc.), not a rolling daily time-series. Fetched
-    once at boot and cached, identically to segments_ref."""
-    return _http_get_csv(ROADS_RESULTS_URL)
+    once at boot and cached, identically to segments_ref. Falls back to the
+    local `data_store/roads_results.csv` mirror whenever the GitHub raw
+    endpoint isn't reachable."""
+    remote_df = _http_get_csv(ROADS_RESULTS_URL)
+    if remote_df is not None:
+        return remote_df
+    return _local_get_csv(ROADS_RESULTS_LOCAL_PATH)
 
 
 def _asof_join_environmental(base_df: pd.DataFrame, time_col: str, env_df: pd.DataFrame, env_cols: list) -> pd.DataFrame:
@@ -269,6 +307,10 @@ def _fetch_single_day_tables(target_day: date) -> Optional[pd.DataFrame]:
     day_str = target_day.strftime('%Y-%m-%d')
 
     routes_df = _http_get_csv(f"{ROUTES_RESULTS_DIR_URL}/{day_str}.csv")
+    if routes_df is None:
+        # Online export isn't there yet (404 / not pushed) -- fall back to
+        # the local workspace mirror before giving up on the day entirely.
+        routes_df = _local_get_csv(os.path.join(ROUTES_RESULTS_LOCAL_DIR, f"{day_str}.csv"))
     if routes_df is None or 'segment_uid' not in routes_df.columns:
         # routes_results is the backbone cycle-by-cycle table; without it
         # there is nothing meaningful to stitch for this day.
@@ -283,7 +325,12 @@ def _fetch_single_day_tables(target_day: date) -> Optional[pd.DataFrame]:
 
     if time_col:
         weather_df = _http_get_csv(f"{WEATHER_RESULTS_DIR_URL}/{day_str}.csv")
+        if weather_df is None:
+            weather_df = _local_get_csv(os.path.join(WEATHER_RESULTS_LOCAL_DIR, f"{day_str}.csv"))
+
         aqi_df = _http_get_csv(f"{AQI_RESULTS_DIR_URL}/{day_str}.csv")
+        if aqi_df is None:
+            aqi_df = _local_get_csv(os.path.join(AQI_RESULTS_LOCAL_DIR, f"{day_str}.csv"))
 
         merged_df = _asof_join_environmental(
             merged_df, time_col, weather_df,
