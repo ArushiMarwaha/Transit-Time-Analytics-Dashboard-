@@ -2779,7 +2779,7 @@ def main():
             st.dataframe(
                 display_tidal.sort_values("AM Λ", ascending=False)
                 .style.format({"AM Λ": "{:.3f}", "PM Λ": "{:.3f}"})
-                .applymap(lambda v: "color:#991B1B;font-weight:700" if v else "color:#166534", subset=["Inversion Loop"])
+                .map(lambda v: "color:#991B1B;font-weight:700" if v else "color:#166534", subset=["Inversion Loop"])
                 .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}])
                 .set_properties(**{"font-size": "11px"}),
                 use_container_width=True, hide_index=True, height=450
@@ -2871,9 +2871,9 @@ def main():
                               "min_lambda": "Min Λ", "mean_lambda": "Mean Λ",
                               "tidal_category": "Tidal Classification"})
             .style.format({"Max Λ": "{:.3f}", "Min Λ": "{:.3f}", "Mean Λ": "{:.3f}"})
-            .applymap(lambda v: "color:#991B1B;font-weight:700" if v == "Strong Tidal"
-                      else ("color:#D97706;font-weight:600" if v == "Moderate Asymmetry"
-                            else "color:#166534"), subset=["Tidal Classification"])
+            .map(lambda v: "color:#991B1B;font-weight:700" if v == "Strong Tidal"
+                else ("color:#D97706;font-weight:600" if v == "Moderate Asymmetry"
+                    else "color:#166534"), subset=["Tidal Classification"])
             .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}]),
             use_container_width=True, hide_index=True
         )
