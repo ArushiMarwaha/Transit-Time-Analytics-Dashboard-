@@ -2490,7 +2490,7 @@ def main():
  
 
     # =============================================================================
-    # MODULE TAB 5: HYPOTHESIS 5 - TIDAL FLOW ASYMMETRY — (ARUSHI)
+    # MODULE TAB 5: HYPOTHESIS 5 — TIDAL FLOW ASYMMETRY
     # =============================================================================
     elif selected_tab == "Hypothesis 5: Tidal Flow Asymmetry":
         inject_professional_style()
@@ -2498,139 +2498,397 @@ def main():
 
         render_page_header(
             "Hypothesis 5 · Directional Tidal Flow & Commuter Asymmetry",
-            "Quantifying directional workload splits across tracking coordinates to assess reversible lane readiness"
+            "Quantifying morning-inbound vs evening-outbound directional splits to assess reversible lane readiness"
         )
 
-        # ==============================================================================
-        # 1. BUSINESS QUESTION
-        # ==============================================================================
         section_title("Business Question")
         st.markdown(
-            "**Does traffic congestion perfectly mirror itself during morning and evening commutes, or is there a severe "
-            "directional imbalance that could justify dynamic lane management (e.g., reversible lanes)?**\n\n"
-            "Traditional transportation networks are managed symmetrically, assuming equal loads on both sides of a road. "
-            "However, if commuting patterns create large directional imbalances, fixed lane allocations waste critical capacity. "
-            "Identifying these differences allows engineers to plan structural adjustments like reversible lanes or directional signal priority."
+            "**Does congestion perfectly mirror itself morning and evening, or is there a severe directional imbalance "
+            "that could justify dynamic reversible lane management?**\n\n"
+            "A true **tidal corridor** shows an Inversion Loop: the ratio climbs to Λ ≥ 1.8 during morning peak "
+            "(08:00–10:00) and flips to Λ ≤ 0.55 during evening rush (17:00–20:00). This pattern, if stable "
+            "week-over-week, justifies reversible lane infrastructure investment."
         )
 
-        with st.expander("📐 Formula reference"):
-            st.markdown("Directional imbalanced variance is calculated using an hourly continuous scaling coefficient:")
-            st.latex(r"\Lambda_{\text{tidal}} = \frac{\mu_{\text{TTI}}(\text{Direction A}, \text{Hour})}{\mu_{\text{TTI}}(\text{Direction B}, \text{Hour})} \quad \vert \quad \text{Asymmetry Matrix} = \mathcal{M}_{i,j} = \frac{1}{N}\sum_{k=1}^N \text{TTI}_{k}(\text{Corridor}_i, \text{Hour}_j)")
+        with st.expander("📐 Formula Reference"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Continuous Tidal Split Coefficient**")
+                st.latex(r"\Lambda_{s,h} = \frac{\mathrm{Median}(TTI_{s,d,h|W=0})}{\mathrm{Median}(TTI_{s,\bar{d},h|W=0})}")
+                st.markdown("Inversion Loop: Λ ≥ 1.8 (AM) → Λ ≤ 0.55 (PM)")
+            with c2:
+                st.markdown("**Wilcoxon Signed-Rank Test Statistic**")
+                st.latex(r"W^+ = \sum_{t=1}^{n} \mathrm{rank}(|D_t|) \cdot \mathbf{1}(D_t > 0)")
+                st.markdown("H₀: Median(X_t) = Median(Y_t) — if p < 0.01, asymmetry is structural")
+            st.markdown("**KS Stability Test (Week 1 vs Week 2)**")
+            st.latex(r"D_{KS} = \max_x |F_{W_1}(x) - F_{W_2}(x)|")
 
         st.write("---")
 
-        # ==============================================================================
-        # 2. DATA PROCESSING LAYER
-        # ==============================================================================
+        # ── Data Preparation ──────────────────────────────────────────────────
         df_tidal = df_fetched.copy()
-        if 'lat' not in df_tidal.columns or 'lon' not in df_tidal.columns:
+        if "lat" not in df_tidal.columns or "lon" not in df_tidal.columns:
             np.random.seed(42)
-            df_tidal['lat'] = np.random.uniform(13.00, 13.15, size=len(df_tidal))
-            df_tidal['lon'] = np.random.uniform(80.20, 80.28, size=len(df_tidal))
-        if 'direction_track' not in df_tidal.columns:
-            df_tidal['direction_track'] = np.where(df_tidal['shapefile_segment_name'].str.contains('001|003|005|018'), 'Northbound', 'Southbound')
+            df_tidal["lat"] = np.random.uniform(13.00, 13.15, size=len(df_tidal))
+            df_tidal["lon"] = np.random.uniform(80.20, 80.28, size=len(df_tidal))
+
+        # Direction detection: use corridor name tokens to infer opposing pairs
+        df_tidal["corridor_resolved"] = resolve_directional_corridors(df_tidal)
+
+        if "direction_track" not in df_tidal.columns:
+            df_tidal["direction_track"] = np.where(
+                df_tidal["shapefile_segment_name"].str.contains("001|003|005|007|009|011|013|015|017", na=False),
+                "Direction A", "Direction B"
+            )
         else:
-            df_tidal['direction_track'] = df_tidal['direction_track'].astype(str).str.upper().str.strip()
-            df_tidal['direction_track'] = df_tidal['direction_track'].map({'NB':'Northbound','N':'Northbound','SB':'Southbound','S':'Southbound'}).fillna('Northbound')
+            df_tidal["direction_track"] = df_tidal["direction_track"].astype(str).str.strip().str.upper()
+            dir_map = {"NB": "Direction A", "N": "Direction A", "NORTHBOUND": "Direction A",
+                       "SB": "Direction B", "S": "Direction B", "SOUTHBOUND": "Direction B",
+                       "EB": "Direction A", "E": "Direction A", "EASTBOUND": "Direction A",
+                       "WB": "Direction B", "W": "Direction B", "WESTBOUND": "Direction B"}
+            df_tidal["direction_track"] = df_tidal["direction_track"].map(dir_map).fillna("Direction A")
 
-        # Hourly directional aggregation
-        tidal_profile = df_tidal.groupby(['corridor_name', 'direction_track', 'derived_hour']).agg(
-            travel_time_index_tti=('travel_time_index_tti', 'mean'),
-            lat=('lat', 'mean'),
-            lon=('lon', 'mean')
-        ).unstack(level=1).reset_index()
+        # ── Scope Control ─────────────────────────────────────────────────────
+        section_title("Scope Control Panel")
+        h5_corr_options = ["All Corridors"] + sorted(df_tidal["corridor_name"].dropna().unique().tolist())
+        h5c1, h5c2 = st.columns([2, 1])
+        with h5c1:
+            selected_corridor_h5 = st.selectbox(
+                "Select Corridor:", h5_corr_options, index=0, key="h5_corridor_selector"
+            )
+        with h5c2:
+            peak_window = st.radio("Peak Window for Λ:", ["Morning (07–10)", "Evening (17–20)"], horizontal=True, key="h5_peak_window")
 
-        tidal_profile.columns = ['corridor_name', 'derived_hour', 'lat_nb', 'lat_sb', 'lon_nb', 'lon_sb', 'Northbound', 'Southbound']
-        tidal_profile['lat'] = tidal_profile['lat_nb'].fillna(df_tidal['lat'].mean())
-        tidal_profile['lon'] = tidal_profile['lon_nb'].fillna(df_tidal['lon'].mean())
+        df_h5 = df_tidal if selected_corridor_h5 == "All Corridors" else df_tidal[df_tidal["corridor_name"] == selected_corridor_h5]
 
-        if 'Northbound' in tidal_profile.columns and 'Southbound' in tidal_profile.columns:
-            tidal_profile['asymmetry_coefficient'] = tidal_profile['Northbound'] / tidal_profile['Southbound']
-            
-            # Summary stats for KPIs
-            max_asym = tidal_profile['asymmetry_coefficient'].max()
-            avg_asym_all = tidal_profile['asymmetry_coefficient'].mean()
-            asym_corridors_count = tidal_profile[(tidal_profile['asymmetry_coefficient'] > 1.3) | (tidal_profile['asymmetry_coefficient'] < 0.7)]['corridor_name'].nunique()
+        # ── Hourly directional aggregation ────────────────────────────────────
+        hourly_dir = df_h5.groupby(["corridor_name", "shapefile_segment_name", "direction_track", "derived_hour"]).agg(
+            mean_tti=("travel_time_index_tti", "mean"),
+            lat=("lat", "mean"),
+            lon=("lon", "mean")
+        ).reset_index()
 
-            # ==============================================================================
-            # 3. KPI HEADER ROW
-            # ==============================================================================
-            kpi_defs = [
-                ("Max Asymmetry Ratio", f"{max_asym:.2f}", "#991B1B", "Peak directional imbalance multiplier"),
-                ("Tidal Corridors", asym_corridors_count, "#D97706", "Corridors with significant flow imbalance"),
-                ("Network Avg Split", f"{avg_asym_all:.2f}", "#166534", "Overall structural symmetry ratio"),
-                ("Monitored Directions", df_tidal['direction_track'].nunique(), "#1E293B", "Active tracking tracks mapped"),
-            ]
-            render_kpi_row(kpi_defs)
-            st.write("")
-            st.write("---")
+        dir_a = hourly_dir[hourly_dir["direction_track"] == "Direction A"].copy()
+        dir_b = hourly_dir[hourly_dir["direction_track"] == "Direction B"].copy()
 
-            section_title("Spatial Distribution & Corridor Directional Asymmetry Registry")
-            st.markdown('<div class="h1-section-sub">Geographic tracking and time-series logs of asymmetrical workloads</div>', unsafe_allow_html=True)
-            
-            c_map, c_panel = st.columns([3, 2])
-            center_lat = df_tidal["lat"].dropna().mean()
-            center_lon = df_tidal["lon"].dropna().mean()
-            
-            with c_map:
-                m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="CartoDB positron")
-                for _, r in tidal_profile.drop_duplicates(subset=['corridor_name']).dropna(subset=["lat", "lon"]).iterrows():
-                    avg_asym = tidal_profile[tidal_profile['corridor_name'] == r['corridor_name']]['asymmetry_coefficient'].mean()
-                    color = "#D97706" if (avg_asym > 1.2 or avg_asym < 0.8) else "#1E293B"
-                    folium.CircleMarker(
-                        [r["lat"], r["lon"]], radius=6, color=color, fill=True, opacity=0.7,
-                        tooltip=f"Corridor: {r['corridor_name']}<br>Mean Asymmetry Ratio: {avg_asym:.3f}"
-                    ).add_to(m)
-                st_folium(m, height=450, use_container_width=True, returned_objects=[], key="map_geo_tidal")
-                
-            with c_panel:
-                st.dataframe(
-                    tidal_profile[['corridor_name', 'derived_hour', 'Northbound', 'Southbound', 'asymmetry_coefficient']].style.format({
-                        'Northbound': '{:.2f}', 'Southbound': '{:.2f}', 'asymmetry_coefficient': '{:.3f}'
-                    }).set_properties(**{'font-size': '12px'}).set_table_styles([
-                         {'selector': 'th', 'props': [('background-color', '#1A293B'), ('color', 'white'), ('font-weight', '600')]}
-                    ]), use_container_width=True, hide_index=True, height=410
+        # Merge opposing directions on corridor + hour for Λ computation
+        merged_dir = dir_a.merge(
+            dir_b[["corridor_name", "derived_hour", "mean_tti"]],
+            on=["corridor_name", "derived_hour"],
+            suffixes=("_a", "_b"),
+            how="inner"
+        )
+        merged_dir["lambda_ratio"] = merged_dir["mean_tti_a"] / merged_dir["mean_tti_b"].clip(lower=0.01)
+
+        # Per-segment tidal metrics
+        am_hours = [7, 8, 9, 10] if "Morning" in peak_window else [17, 18, 19, 20]
+        pm_hours = [17, 18, 19, 20] if "Morning" in peak_window else [7, 8, 9, 10]
+
+        seg_dir_a_am = df_h5[(df_h5["direction_track"] == "Direction A") & (df_h5["derived_hour"].isin(am_hours))].groupby("shapefile_segment_name")["travel_time_index_tti"].mean()
+        seg_dir_b_am = df_h5[(df_h5["direction_track"] == "Direction B") & (df_h5["derived_hour"].isin(am_hours))].groupby("shapefile_segment_name")["travel_time_index_tti"].mean()
+        seg_dir_a_pm = df_h5[(df_h5["direction_track"] == "Direction A") & (df_h5["derived_hour"].isin(pm_hours))].groupby("shapefile_segment_name")["travel_time_index_tti"].mean()
+        seg_dir_b_pm = df_h5[(df_h5["direction_track"] == "Direction B") & (df_h5["derived_hour"].isin(pm_hours))].groupby("shapefile_segment_name")["travel_time_index_tti"].mean()
+
+        seg_tidal = pd.DataFrame({
+            "dir_a_am": seg_dir_a_am,
+            "dir_b_am": seg_dir_b_am,
+            "dir_a_pm": seg_dir_a_pm,
+            "dir_b_pm": seg_dir_b_pm,
+        }).fillna(1.0)
+        seg_tidal["lambda_am"] = seg_tidal["dir_a_am"] / seg_tidal["dir_b_am"].clip(lower=0.01)
+        seg_tidal["lambda_pm"] = seg_tidal["dir_a_pm"] / seg_tidal["dir_b_pm"].clip(lower=0.01)
+        seg_tidal["inversion_loop"] = (seg_tidal["lambda_am"] >= 1.8) & (seg_tidal["lambda_pm"] <= 0.55)
+        seg_tidal = seg_tidal.reset_index()
+
+        seg_tidal_with_geo = seg_tidal.merge(
+            df_h5.groupby("shapefile_segment_name").agg(lat=("lat", "mean"), lon=("lon", "mean"),
+                                                         corridor_name=("corridor_name", "first")).reset_index(),
+            on="shapefile_segment_name", how="left"
+        )
+
+        # ── Corridor-level tidal summary ──────────────────────────────────────
+        corr_tidal = df_h5.groupby(["corridor_name", "direction_track", "derived_hour"]).agg(
+            mean_tti=("travel_time_index_tti", "mean")
+        ).reset_index()
+
+        corr_lambda = corr_tidal[corr_tidal["direction_track"] == "Direction A"].merge(
+            corr_tidal[corr_tidal["direction_track"] == "Direction B"][["corridor_name", "derived_hour", "mean_tti"]],
+            on=["corridor_name", "derived_hour"], suffixes=("_a", "_b"), how="inner"
+        )
+        corr_lambda["lambda"] = corr_lambda["mean_tti_a"] / corr_lambda["mean_tti_b"].clip(lower=0.01)
+
+        corr_summary = corr_lambda.groupby("corridor_name").agg(
+            max_lambda=("lambda", "max"),
+            min_lambda=("lambda", "min"),
+            mean_lambda=("lambda", "mean"),
+        ).reset_index()
+        corr_summary["tidal_category"] = corr_summary.apply(
+            lambda r: "Strong Tidal" if r["max_lambda"] >= 1.8 and r["min_lambda"] <= 0.55
+            else ("Moderate Asymmetry" if (r["max_lambda"] >= 1.3 or r["min_lambda"] <= 0.77)
+                  else "Balanced"), axis=1
+        )
+
+        # ── Wilcoxon Signed-Rank Test ─────────────────────────────────────────
+        from scipy import stats as _scipy_stats
+        dir_a_vals = df_h5[df_h5["direction_track"] == "Direction A"]["travel_time_index_tti"].dropna()
+        dir_b_vals = df_h5[df_h5["direction_track"] == "Direction B"]["travel_time_index_tti"].dropna()
+        wx_p, wx_stat = np.nan, np.nan
+        shapiro_reject = False
+        if len(dir_a_vals) >= 5 and len(dir_b_vals) >= 5:
+            n_test = min(len(dir_a_vals), len(dir_b_vals))
+            xa = dir_a_vals.values[:n_test]
+            xb = dir_b_vals.values[:n_test]
+            diff = xa - xb
+            if len(diff) <= 5000:
+                try:
+                    sw_stat, sw_p = _scipy_stats.shapiro(diff)
+                    shapiro_reject = sw_p < 0.05
+                except Exception:
+                    shapiro_reject = True
+            else:
+                shapiro_reject = True
+            try:
+                wx_stat, wx_p = _scipy_stats.wilcoxon(xa, xb, alternative="two-sided")
+            except Exception:
+                pass
+
+        # KS stability test if execution timestamps available
+        ks_p, ks_stable = np.nan, None
+        if "execution_timestamp" in df_h5.columns:
+            try:
+                df_h5_ts = df_h5.copy()
+                df_h5_ts["_week"] = pd.to_datetime(df_h5_ts["execution_timestamp"], errors="coerce").dt.isocalendar().week
+                weeks_available = sorted(df_h5_ts["_week"].dropna().unique())
+                if len(weeks_available) >= 2:
+                    w1_data = df_h5_ts[df_h5_ts["_week"] == weeks_available[0]]["travel_time_index_tti"].dropna().values
+                    w2_data = df_h5_ts[df_h5_ts["_week"] == weeks_available[1]]["travel_time_index_tti"].dropna().values
+                    if len(w1_data) >= 10 and len(w2_data) >= 10:
+                        ks_stat, ks_p = _scipy_stats.ks_2samp(w1_data, w2_data)
+                        ks_stable = ks_p > 0.05
+            except Exception:
+                pass
+
+        # ── KPI Header ────────────────────────────────────────────────────────
+        n_inverted = int(seg_tidal["inversion_loop"].sum()) if len(seg_tidal) > 0 else 0
+        max_lambda = float(seg_tidal["lambda_am"].max()) if len(seg_tidal) > 0 else 1.0
+        strong_tidal_count = int((corr_summary["tidal_category"] == "Strong Tidal").sum()) if len(corr_summary) > 0 else 0
+        render_kpi_row([
+            ("Inversion Loop Segments",   n_inverted,        "#991B1B", "Λ ≥ 1.8 AM and Λ ≤ 0.55 PM"),
+            ("Max Asymmetry Ratio (Λ)",   f"{max_lambda:.2f}", "#D97706", "Peak directional imbalance"),
+            ("Strong Tidal Corridors",    strong_tidal_count, "#166534", "Full inversion-loop corridors"),
+            ("Wilcoxon p-value",
+             f"{wx_p:.4f}" if not np.isnan(wx_p) else "N/A",
+             "#991B1B" if (not np.isnan(wx_p) and wx_p < 0.01) else "#166534",
+             "Asymmetry statistical significance"),
+        ])
+        st.write("")
+        st.write("---")
+
+        # ── Dynamic Callout ───────────────────────────────────────────────────
+        if n_inverted > 0:
+            worst_tidal = seg_tidal.sort_values("lambda_am", ascending=False).iloc[0]
+            render_callout(
+                f"🔀 <b>Inversion Loop Confirmed:</b> <code>{worst_tidal['shapefile_segment_name']}</code> — "
+                f"AM Λ = <b>{worst_tidal['lambda_am']:.2f}</b> (≥ 1.8), PM Λ = <b>{worst_tidal['lambda_pm']:.2f}</b> (≤ 0.55). "
+                f"This segment qualifies for reversible lane evaluation.<br><br>"
+                f"🏗️ <b>Engineering Recommendation:</b> "
+                + ("If no fixed median barrier — install dynamic reversible lane with automated bollard system. "
+                   "If fixed barrier present — implement asymmetric signal green-time phasing (AM: +40% inbound, PM: +40% outbound).")
+                + (f"<br><br>📊 <b>KS Stability:</b> Week-over-week pattern is "
+                   + ("structurally stable (p = {:.4f} > 0.05) — safe to invest.".format(ks_p) if ks_stable else
+                      "shifting week-to-week — monitor further before capital commitment.")
+                   if ks_stable is not None else ""),
+                border_color="#991B1B"
+            )
+        elif not np.isnan(wx_p) and wx_p < 0.01:
+            render_callout(
+                f"📊 <b>Statistically Significant Asymmetry Confirmed</b> (Wilcoxon p = {wx_p:.4f} < 0.01) — "
+                "directional imbalance is real but no full inversion loop detected. Consider asymmetric signal phasing.",
+                border_color="#D97706"
+            )
+        else:
+            render_callout(
+                "✅ No statistically significant tidal inversion detected in this selection. "
+                "Standard balanced signal cycles are appropriate for this corridor set.",
+                border_color="#166534"
+            )
+        st.write("---")
+
+        # ── Map + Directional Panel ───────────────────────────────────────────
+        section_title(f"Spatial Tidal Distribution Map — {selected_corridor_h5}")
+        st.markdown('<div class="h1-section-sub">Red = Inversion Loop Confirmed | Amber = Moderate Asymmetry | Green = Balanced</div>', unsafe_allow_html=True)
+
+        cm_h5, cp_h5 = st.columns([3, 2])
+        clat_h5 = seg_tidal_with_geo["lat"].dropna().mean() if len(seg_tidal_with_geo) > 0 else 13.0827
+        clon_h5 = seg_tidal_with_geo["lon"].dropna().mean() if len(seg_tidal_with_geo) > 0 else 80.2707
+
+        with cm_h5:
+            m_h5 = folium.Map(location=[clat_h5, clon_h5], zoom_start=11 if selected_corridor_h5 == "All Corridors" else 13, tiles="CartoDB positron")
+            legend_html_h5 = """
+            <div style="position:fixed;bottom:30px;left:30px;z-index:9999;background:white;
+                        padding:12px 16px;border-radius:8px;border:1px solid #CBD5E1;font-size:12px;font-family:sans-serif;">
+              <b style="color:#1E293B;">Tidal Flow Classification</b><br>
+              <span style="color:#991B1B;">&#9632;</span> Inversion Loop (Λ ≥ 1.8 AM, ≤ 0.55 PM)<br>
+              <span style="color:#D97706;">&#9632;</span> Moderate Asymmetry<br>
+              <span style="color:#166534;">&#9632;</span> Balanced Flow
+            </div>"""
+            m_h5.get_root().html.add_child(folium.Element(legend_html_h5))
+
+            for _, r in seg_tidal_with_geo.dropna(subset=["lat", "lon"]).iterrows():
+                if r["inversion_loop"]:
+                    clr_h5 = "#991B1B"
+                    tier = "INVERSION LOOP — Reversible lane candidate"
+                elif r["lambda_am"] >= 1.3 or r["lambda_pm"] <= 0.77:
+                    clr_h5 = "#D97706"
+                    tier = "Moderate Asymmetry — Signal phasing review"
+                else:
+                    clr_h5 = "#166534"
+                    tier = "Balanced — Standard signal cycle"
+                tip_h5 = (
+                    f"<div style='font-family:sans-serif;font-size:12px;min-width:220px'>"
+                    f"<b style='color:#1E293B'>{r['shapefile_segment_name']}</b><br>"
+                    f"<span style='color:#475569'>{r.get('corridor_name', '')}</span><br><hr style='margin:3px 0'>"
+                    f"<b>AM Λ Ratio:</b> {r['lambda_am']:.3f}<br>"
+                    f"<b>PM Λ Ratio:</b> {r['lambda_pm']:.3f}<br>"
+                    f"<b>Inversion Loop:</b> {'✅ Yes' if r['inversion_loop'] else '❌ No'}<br><hr style='margin:3px 0'>"
+                    f"<b style='color:{clr_h5}'>Classification:</b> {tier}</div>"
                 )
-            st.write("---")
+                folium.CircleMarker(
+                    location=[r["lat"], r["lon"]],
+                    radius=7 if r["inversion_loop"] else 5,
+                    color=clr_h5, fill=True, fill_opacity=0.9,
+                    tooltip=folium.Tooltip(tip_h5, sticky=True)
+                ).add_to(m_h5)
 
-            # ==============================================================================
-            # 4. HOURLY ASYMMETRY PROFILES
-            # ==============================================================================
-            section_title("Diurnal Tidal Flow Divergence Curves")
-            col_g1, col_g2 = st.columns(2)
-            
-            with col_g1:
-                fig_t1 = plt.figure(figsize=(6, 5), facecolor='white')
-                ax_t1 = fig_t1.add_subplot(111, facecolor='white')
-                for corr in tidal_profile['corridor_name'].unique():
-                    corr_sub = tidal_profile[tidal_profile['corridor_name'] == corr].sort_values(by='derived_hour')
-                    ax_t1.plot(corr_sub['derived_hour'], corr_sub['asymmetry_coefficient'], label=corr, marker='o', linewidth=2)
-                ax_t1.axhline(y=1.0, color='gray', linestyle='--')
-                ax_t1.set_xlabel("Hour of Day (24-Hour Cycle)", color='#0F172A', fontsize=9, fontweight='bold')
-                ax_t1.set_ylabel("Asymmetry Coefficient (NB / SB)", color='#0F172A', fontsize=9, fontweight='bold')
-                ax_t1.set_xticks(range(0, 24, 2))
-                ax_t1.grid(True, linestyle=':', alpha=0.5)
-                ax_t1.legend(fontsize=7, loc='upper right', facecolor='white')
-                style_axes(ax_t1)
-                st.pyplot(fig_t1)
-                st.caption("Values migrating away from the 1.0 line represent escalating directional imbalances.")
+            # Direction A markers (smaller, dashed outline)
+            for _, r in df_h5[(df_h5["direction_track"] == "Direction A") & df_h5["lat"].notna()].drop_duplicates("shapefile_segment_name").head(50).iterrows():
+                folium.CircleMarker(
+                    location=[r["lat"], r["lon"]], radius=3,
+                    color="#1E40AF", fill=False, opacity=0.5,
+                    tooltip=f"Dir A: {r['shapefile_segment_name']}"
+                ).add_to(m_h5)
 
-            with col_g2:
-                fig_t2, (ax_th1, ax_th2) = plt.subplots(1, 2, figsize=(8, 5), facecolor='white')
-                ax_th1.set_facecolor('white')
-                ax_th2.set_facecolor('white')
-                heat_nb = df_tidal[df_tidal['direction_track'] == 'Northbound'].groupby(['corridor_name', 'derived_hour'])['travel_time_index_tti'].mean().unstack().fillna(1.0)
-                heat_sb = df_tidal[df_tidal['direction_track'] == 'Southbound'].groupby(['corridor_name', 'derived_hour'])['travel_time_index_tti'].mean().unstack().fillna(1.0)
-                
-                sns.heatmap(heat_nb, cmap='YlOrRd', ax=ax_th1, cbar=False, vmin=1.0, vmax=2.5)
-                ax_th1.set_title("Northbound Footprint", fontsize=9, fontweight='bold', color='#0F172A')
-                sns.heatmap(heat_sb, cmap='YlOrRd', ax=ax_th2, cbar=False, vmin=1.0, vmax=2.5)
-                ax_th2.set_title("Southbound Footprint", fontsize=9, fontweight='bold', color='#0F172A')
-                style_axes(ax_th1); style_axes(ax_th2)
-                st.pyplot(fig_t2)
-                st.caption("Side-by-side heat matrices highlighting the mismatch in commuter load profiles between directions.")
-        else:
-            st.warning("Directional tracking requires multiple vector variants. Check input source column alignments.")
+            st_folium(m_h5, height=480, use_container_width=True, returned_objects=[],
+                      key=f"map_h5_{selected_corridor_h5}_{peak_window}")
+
+        with cp_h5:
+            st.markdown("**Segment-Level Tidal Ratio Registry**")
+            display_tidal = seg_tidal_with_geo[["shapefile_segment_name", "corridor_name",
+                                                 "lambda_am", "lambda_pm", "inversion_loop"]].copy()
+            display_tidal.columns = ["Segment", "Corridor", "AM Λ", "PM Λ", "Inversion Loop"]
+            st.dataframe(
+                display_tidal.sort_values("AM Λ", ascending=False)
+                .style.format({"AM Λ": "{:.3f}", "PM Λ": "{:.3f}"})
+                .applymap(lambda v: "color:#991B1B;font-weight:700" if v else "color:#166534", subset=["Inversion Loop"])
+                .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}])
+                .set_properties(**{"font-size": "11px"}),
+                use_container_width=True, hide_index=True, height=450
+            )
+        st.write("---")
+
+        # ── Chart Suite ───────────────────────────────────────────────────────
+        section_title("Diurnal Tidal Divergence Profiles")
+        col_g1_h5, col_g2_h5 = st.columns(2)
+
+        with col_g1_h5:
+            fig_lambda = plt.figure(figsize=(6.5, 5), facecolor="white")
+            ax_lambda = fig_lambda.add_subplot(111, facecolor="white")
+            pivot_corrs = corr_lambda["corridor_name"].unique()
+            colors_cycle = plt.cm.tab10(np.linspace(0, 1, min(len(pivot_corrs), 10)))
+            for idx, corr in enumerate(pivot_corrs[:8]):
+                sub = corr_lambda[corr_lambda["corridor_name"] == corr].sort_values("derived_hour")
+                if len(sub) == 0:
+                    continue
+                ax_lambda.plot(sub["derived_hour"], sub["lambda"], label=corr[:20],
+                               linewidth=2.0, marker="o", markersize=4,
+                               color=colors_cycle[idx % len(colors_cycle)])
+            ax_lambda.axhline(1.0, color="#64748B", linestyle="--", linewidth=1.0, alpha=0.7)
+            ax_lambda.axhline(1.8, color="#991B1B", linestyle=":", linewidth=1.1, alpha=0.8)
+            ax_lambda.axhline(0.55, color="#D97706", linestyle=":", linewidth=1.1, alpha=0.8)
+            ax_lambda.text(0.5, 1.82, r"$\Lambda \geq 1.8$ (AM threshold)", fontsize=7, color="#991B1B")
+            ax_lambda.text(0.5, 0.46, r"$\Lambda \leq 0.55$ (PM threshold)", fontsize=7, color="#D97706")
+            ax_lambda.set_xlabel("Hour of Day (IST)", color="#0F172A", fontsize=9, fontweight="bold")
+            ax_lambda.set_ylabel(r"Tidal Split Coefficient $\Lambda_{s,h}$", color="#0F172A", fontsize=9, fontweight="bold")
+            ax_lambda.set_title("Hourly Directional Asymmetry Coefficient", fontsize=10, fontweight="bold", color="#0F172A")
+            ax_lambda.set_xticks(range(0, 24, 2))
+            ax_lambda.legend(fontsize=6.5, loc="upper right", facecolor="white", edgecolor="#CBD5E1", ncol=2)
+            ax_lambda.grid(True, linestyle=":", alpha=0.4)
+            style_axes(ax_lambda)
+            plt.tight_layout()
+            st.pyplot(fig_lambda)
+            st.caption("Values diverging from 1.0 confirm directional imbalances. The inversion loop is the flip across both red/amber thresholds.")
+
+        with col_g2_h5:
+            fig_heat, (ax_da, ax_db) = plt.subplots(1, 2, figsize=(8, 5), facecolor="white")
+            ax_da.set_facecolor("white")
+            ax_db.set_facecolor("white")
+            heat_a = df_h5[df_h5["direction_track"] == "Direction A"].groupby(
+                ["corridor_name", "derived_hour"])["travel_time_index_tti"].mean().unstack().fillna(1.0)
+            heat_b = df_h5[df_h5["direction_track"] == "Direction B"].groupby(
+                ["corridor_name", "derived_hour"])["travel_time_index_tti"].mean().unstack().fillna(1.0)
+            sns.heatmap(heat_a, cmap="YlOrRd", ax=ax_da, cbar=False, vmin=1.0, vmax=2.8,
+                        linewidths=0.3, linecolor="#F1F5F9")
+            ax_da.set_title("Direction A\n(Inbound / Northbound)", fontsize=9, fontweight="bold", color="#0F172A")
+            ax_da.set_xlabel("Hour (IST)", fontsize=7, color="#0F172A")
+            ax_da.tick_params(labelsize=6.5)
+            sns.heatmap(heat_b, cmap="YlOrRd", ax=ax_db, cbar=True, vmin=1.0, vmax=2.8,
+                        linewidths=0.3, linecolor="#F1F5F9", cbar_kws={"shrink": 0.8})
+            ax_db.set_title("Direction B\n(Outbound / Southbound)", fontsize=9, fontweight="bold", color="#0F172A")
+            ax_db.set_xlabel("Hour (IST)", fontsize=7, color="#0F172A")
+            ax_db.set_ylabel("")
+            ax_db.tick_params(labelsize=6.5)
+            style_axes(ax_da)
+            style_axes(ax_db)
+            plt.tight_layout()
+            st.pyplot(fig_heat)
+            st.caption("Side-by-side heatmaps expose the directional load mismatch. Deep red in opposing windows = tidal flow.")
+
+        # ── Statistical Test Summary ──────────────────────────────────────────
+        st.write("---")
+        section_title("Statistical Test Results — Asymmetry Verification Suite")
+        stat_c1, stat_c2, stat_c3 = st.columns(3)
+        with stat_c1:
+            sw_txt = "Normal (use t-test)" if not shapiro_reject else "Non-normal → Wilcoxon selected ✅"
+            st.markdown(f'<div class="h1-kpi-card"><div class="h1-kpi-label">Shapiro-Wilk Normality Test</div><div class="h1-kpi-value" style="font-size:16px;color:#3498db">{sw_txt}</div><div class="h1-kpi-sub">Applied to difference vector D_t = X_t - Y_t</div></div>', unsafe_allow_html=True)
+        with stat_c2:
+            wx_color = "#991B1B" if (not np.isnan(wx_p) and wx_p < 0.01) else "#166534"
+            wx_label = f"{wx_p:.4f}" if not np.isnan(wx_p) else "N/A"
+            wx_verdict = "Asymmetry Confirmed (p < 0.01)" if (not np.isnan(wx_p) and wx_p < 0.01) else "Not Significant"
+            st.markdown(f'<div class="h1-kpi-card"><div class="h1-kpi-label">Wilcoxon Signed-Rank p-value</div><div class="h1-kpi-value" style="color:{wx_color}">{wx_label}</div><div class="h1-kpi-sub">{wx_verdict}</div></div>', unsafe_allow_html=True)
+        with stat_c3:
+            ks_label = f"{ks_p:.4f}" if not np.isnan(ks_p) else "Insufficient weeks"
+            ks_color = "#166534" if ks_stable else ("#991B1B" if ks_stable is False else "#3498db")
+            ks_verdict = ("Stable week-over-week ✅" if ks_stable else ("Pattern shifted ⚠️" if ks_stable is False else "Need ≥2 weeks of data"))
+            st.markdown(f'<div class="h1-kpi-card"><div class="h1-kpi-label">KS Test Stability (W₁ vs W₂)</div><div class="h1-kpi-value" style="color:{ks_color}">{ks_label}</div><div class="h1-kpi-sub">{ks_verdict}</div></div>', unsafe_allow_html=True)
+        st.write("")
+
+        # ── Corridor summary table ────────────────────────────────────────────
+        st.write("---")
+        section_title("Corridor-Level Tidal Classification Summary")
+        st.dataframe(
+            corr_summary.sort_values("max_lambda", ascending=False)
+            .rename(columns={"corridor_name": "Corridor", "max_lambda": "Max Λ",
+                              "min_lambda": "Min Λ", "mean_lambda": "Mean Λ",
+                              "tidal_category": "Tidal Classification"})
+            .style.format({"Max Λ": "{:.3f}", "Min Λ": "{:.3f}", "Mean Λ": "{:.3f}"})
+            .applymap(lambda v: "color:#991B1B;font-weight:700" if v == "Strong Tidal"
+                      else ("color:#D97706;font-weight:600" if v == "Moderate Asymmetry"
+                            else "color:#166534"), subset=["Tidal Classification"])
+            .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}]),
+            use_container_width=True, hide_index=True
+        )
+
+        # ── Policy Matrix ─────────────────────────────────────────────────────
+        st.write("---")
+        section_title("Actionable Policy Translation Matrix")
+        policy_h5 = pd.DataFrame([
+            {"Diagnostic Finding": "Inversion Loop + No Fixed Barrier", "Statistical Signal": "Wilcoxon p < 0.01, Λ ≥ 1.8 AM / ≤ 0.55 PM", "Targeted CUMTA Intervention": "Install dynamic reversible lane with automated bollard system"},
+            {"Diagnostic Finding": "Inversion Loop + Fixed Barrier", "Statistical Signal": "Wilcoxon p < 0.01, has_fixed_median = 1", "Targeted CUMTA Intervention": "Asymmetric signal green-time phasing (AM +40% inbound, PM +40% outbound)"},
+            {"Diagnostic Finding": "Stable High Asymmetry (KS p > 0.05)", "Statistical Signal": "Λ ≥ 1.8, consistent week-over-week", "Targeted CUMTA Intervention": "Dedicated inward commuter buffer lane or contraflow zone"},
+            {"Diagnostic Finding": "Symmetric Flow Profile (Λ ≈ 1.0)", "Statistical Signal": "Wilcoxon H₀ not rejected", "Targeted CUMTA Intervention": "Standard balanced signal cycle — no lane modification needed"},
+            {"Diagnostic Finding": "Low KS Stability (p < 0.05)", "Statistical Signal": "Distribution shifts week-over-week", "Targeted CUMTA Intervention": "Dynamic incident monitoring — pattern too variable for capital investment"},
+        ])
+        st.table(policy_h5)
     
    # =============================================================================
     # MODULE TAB 6: HYPOTHESIS 6 - COMMUTER UNCERTAINTY — (ARUSHI)
