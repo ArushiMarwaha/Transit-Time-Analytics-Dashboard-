@@ -1535,7 +1535,7 @@ def main():
  
  
    # =============================================================================
-    # MODULE TAB 2: HYPOTHESIS 2 - TEMPORAL PEAK PROFILING
+    # MODULE TAB 2: HYPOTHESIS 2 - TEMPORAL Peak PROFILING
     # =============================================================================
     elif selected_tab == "Hypothesis 2: Temporal Peak Profiling":
 
@@ -1768,17 +1768,29 @@ def main():
         )
  
         ml2_df = df_fetched.copy()
+        
         ml2_df['hour_sin'] = np.sin(2 * np.pi * ml2_df['derived_hour'] / 24.0)
         ml2_df['hour_cos'] = np.cos(2 * np.pi * ml2_df['derived_hour'] / 24.0)
- 
+        # Second harmonic (period = 12h, i.e. 2 cycles/day) — a single harmonic can
+        # only express one peak + one trough per 24h, so any corridor with a genuine
+        # morning AND evening rush forces the first-harmonic-only model to average or
+        # pick one. Adding this second harmonic lets the curve express two humps.
+        ml2_df['hour_sin2'] = np.sin(2 * np.pi * 2 * ml2_df['derived_hour'] / 24.0)
+        ml2_df['hour_cos2'] = np.cos(2 * np.pi * 2 * ml2_df['derived_hour'] / 24.0)
+
         corr_dummies = pd.get_dummies(ml2_df['corridor_name'], prefix='corr', drop_first=True).astype(float)
         inter_sin = corr_dummies.multiply(ml2_df['hour_sin'], axis=0)
         inter_sin.columns = [c + '_x_hoursin' for c in corr_dummies.columns]
         inter_cos = corr_dummies.multiply(ml2_df['hour_cos'], axis=0)
         inter_cos.columns = [c + '_x_hourcos' for c in corr_dummies.columns]
- 
+        inter_sin2 = corr_dummies.multiply(ml2_df['hour_sin2'], axis=0)
+        inter_sin2.columns = [c + '_x_hoursin2' for c in corr_dummies.columns]
+        inter_cos2 = corr_dummies.multiply(ml2_df['hour_cos2'], axis=0)
+        inter_cos2.columns = [c + '_x_hourcos2' for c in corr_dummies.columns]
+
         feature_frame = pd.concat(
-            [ml2_df[['hour_sin', 'hour_cos', 'is_weekend']].astype(float), corr_dummies, inter_sin, inter_cos],
+            [ml2_df[['hour_sin', 'hour_cos', 'hour_sin2', 'hour_cos2', 'is_weekend']].astype(float),
+             corr_dummies, inter_sin, inter_cos, inter_sin2, inter_cos2],
             axis=1
         )
         target_vec = ml2_df['is_failed'].astype(float).values
