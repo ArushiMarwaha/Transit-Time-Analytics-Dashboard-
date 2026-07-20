@@ -1902,7 +1902,7 @@ def main():
  
 
     # =============================================================================
-    # MODULE TAB 3: HYPOTHESIS 3 - GEOMETRIC CONSTRAINTS — (ARUSHI)
+    # MODULE TAB 3: HYPOTHESIS 3 — GEOMETRIC CONSTRAINTS & STRUCTURAL CHOKE POINTS
     # =============================================================================
     elif selected_tab == "Hypothesis 3: Geometric Constraints":
 
@@ -1911,279 +1911,464 @@ def main():
 
         render_page_header(
             "Hypothesis 3 · Structural Choke Points & Geometric Constraints",
-            "Cross-referencing static structural constraints against baseline traffic speeds to isolate permanent deficits"
+            "Separating permanent infrastructure deficits from transient demand spikes using two-tier behavioral taxonomy"
         )
 
-        # ==============================================================================
-        # 1. BUSINESS QUESTION & METHODOLOGY
-        # ==============================================================================
+        # ── Business Question ─────────────────────────────────────────────────
         section_title("Business Question")
         st.markdown(
-            "**Are specific infrastructure features—such as physical lane drops, poorly placed bus stops, or dense clusters "
-            "of traffic signals—the primary drivers of localized congestion?**\n\n"
-            "Congestion often looks identical across adjoining links during peak hours — speeds drop and travel times "
-            "spike everywhere at once. The underlying asset driver is completely different, though:\n\n"
-            "- **Structural Design Deficits (Quadrant I):** These come from a permanent physical layout issue — an absolute lane drop "
-            "between connecting segments, poor static intersection spacing, or high intermodal bus friction. These require on-site "
-            "engineering modifications and capital works, as they fail independent of daily commuting volume variations.\n"
-            "- **Temporal Volume Spikes (Quadrant II):** These segments possess no physical layout defects. They experience brief capacity "
-            "breakdowns strictly during peak windows because regional demand exceeds design thresholds. These are managed via signal retiming."
+            "**Are specific infrastructure features—lane drops, poorly placed bus stops, or dense signal clusters—"
+            "the primary drivers of localized congestion? How do we separate permanent structural failures "
+            "from transient demand spikes?**\n\n"
+            "- **Quadrant I (Persistent Congestion / Structural):** Fails even at 3 AM — geometry is the problem.\n"
+            "- **Quadrant II (Temporal Congestion):** Only breaks down during rush hours — demand management can fix it.\n"
+            "- **Quadrant III (Nominal Flow):** Operating within design parameters."
         )
 
-        section_title("Methodology")
-        st.markdown(
-            "Travel Time Index (TTI) data is grouped across explicit temporal blocks. Peak hours map to standard weekday rush windows "
-            "(08:00–10:00 IST and 17:00–20:00 IST), while off-peak baselines track late-night conditions (23:00–05:00 IST) to establish "
-            "a zero-volume speed baseline. The engine derives three micro-infrastructure indicators per segment: **Downstream Lane Drops** "
-            "($\\Delta\\text{Lanes}_s = L_s - L_{s+1}$), **Signal Density Proxies** ($D_{\\text{sig},s} = 1000 / \\text{Dist}_{\\text{signal}}$), "
-            "and **Intermodal Bus Friction** ($F_{\\text{bus},s} = 1 / [D_{\\text{bus}} \\times L_s]$). Segments are categorized into "
-            "operational quadrants based on their off-peak versus peak capacity markers."
-        )
-        
-        render_callout(
-            "📐 <b>Why off-peak thresholds isolate assets:</b> Under standard conditions, late-night traffic should flow freely "
-            "with a TTI near 1.0. If a segment retains an elevated off-peak index ($\\Omega_{\\text{offpeak}} \\ge 1.35$), it mathematically "
-            "proves that static physical architecture—and not temporary vehicle volume—is constricting vehicle velocity.",
-            border_color="#3498db"
-        )
-
-        with st.expander("📐 Formula reference"):
-            st.markdown("Segments are classified into one of three structural typologies using a two-tiered threshold gate:")
-            m1, m2, m3 = st.columns(3)
-            with m1:
-                st.markdown("**Quadrant I: Structural Deficit**")
-                st.latex(r"\Omega_{\text{offpeak}} \ge 1.35 \ \land \ \Omega_{\text{peak}} \ge 1.50")
-            with m2:
-                st.markdown("**Quadrant II: Temporal Congestion**")
-                st.latex(r"\Omega_{\text{offpeak}} < 1.35 \ \land \ \Omega_{\text{peak}} \ge 1.50")
-            with m3:
-                st.markdown("**Quadrant III: Nominal Flow**")
-                st.latex(r"\Omega_{\text{peak}} < 1.50")
-
-            st.markdown("**Micro-Infrastructure Friction Formulation:**")
-            st.latex(r"\Delta\text{Lanes}_s = L_s - L_{s+1} \quad \vert \quad D_{\text{sig},s} = \frac{1000}{\max(D_{\text{signal}}, 1)} \quad \vert \quad F_{\text{bus},s} = \frac{1}{\max(D_{\text{bus}}, 1) \times L_s}")
+        with st.expander("📐 Formula Reference — Micro-Infrastructure Friction Indices"):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown("**Lane Drop Delta**")
+                st.latex(r"\Delta\text{Lanes}_s = L_s - L_{s+1}")
+            with c2:
+                st.markdown("**Signal Density Proxy**")
+                st.latex(r"D_{\text{sig},s} = \frac{1000}{\max(D_{\text{signal}}, 1\text{m})}")
+            with c3:
+                st.markdown("**Intermodal Bus Friction**")
+                st.latex(r"F_{\text{bus},s} = \frac{1}{\max(D_{\text{bus}}, 1\text{m}) \times L_s}")
+            st.markdown("**Quadrant Classification Thresholds (per research blueprint):**")
+            c4, c5, c6 = st.columns(3)
+            with c4:
+                st.markdown("**Q-I: Persistent Congestion**")
+                st.latex(r"\Omega_{\text{offpeak}} \ge 1.5 \;\cap\; \Omega_{\text{peak}} \ge 2.2")
+            with c5:
+                st.markdown("**Q-II: Temporal Congestion**")
+                st.latex(r"\Omega_{\text{offpeak}} < 1.5 \;\cap\; \Omega_{\text{peak}} \ge 2.2")
+            with c6:
+                st.markdown("**Q-III: Nominal / Healthy**")
+                st.latex(r"\Omega_{\text{peak}} < 2.2")
 
         st.write("---")
 
-        # ==============================================================================
-        # 2. DATA PREPARATION & BASELINE ENRICHMENT
-        # ==============================================================================
+        # ── Data Preparation ──────────────────────────────────────────────────
         df_struct_raw = df_fetched.copy()
-        
-        # Safe column parsing and fallback simulations
-        if 'lat' not in df_struct_raw.columns or 'lon' not in df_struct_raw.columns:
+
+        if "lat" not in df_struct_raw.columns or "lon" not in df_struct_raw.columns:
             np.random.seed(42)
-            df_struct_raw['lat'] = np.random.uniform(13.00, 13.15, size=len(df_struct_raw))
-            df_struct_raw['lon'] = np.random.uniform(80.20, 80.28, size=len(df_struct_raw))
-        if 'nearest_signal_dist_meters' not in df_struct_raw.columns:
-            df_struct_raw['nearest_signal_dist_meters'] = df_struct_raw.get('nearest_signal_distance_meters', np.random.uniform(100.0, 1500.0, size=len(df_struct_raw)))
-        if 'nearest_bus_stop_dist_meters' not in df_struct_raw.columns:
-            df_struct_raw['nearest_bus_stop_dist_meters'] = np.random.uniform(50.0, 1200.0, size=len(df_struct_raw))
-        if 'road_width_lanes' not in df_struct_raw.columns:
-            df_struct_raw['road_width_lanes'] = np.random.choice([2, 3, 4], size=len(df_struct_raw))
-        if 'sequence_order' not in df_struct_raw.columns:
-            df_struct_raw['sequence_order'] = 1
+            df_struct_raw["lat"] = np.random.uniform(13.00, 13.15, size=len(df_struct_raw))
+            df_struct_raw["lon"] = np.random.uniform(80.20, 80.28, size=len(df_struct_raw))
+        if "nearest_signal_dist_meters" not in df_struct_raw.columns:
+            np.random.seed(7)
+            df_struct_raw["nearest_signal_dist_meters"] = np.random.uniform(100.0, 1500.0, size=len(df_struct_raw))
+        if "nearest_bus_stop_dist_meters" not in df_struct_raw.columns:
+            np.random.seed(8)
+            df_struct_raw["nearest_bus_stop_dist_meters"] = np.random.uniform(50.0, 1200.0, size=len(df_struct_raw))
+        if "road_width_lanes" not in df_struct_raw.columns:
+            df_struct_raw["road_width_lanes"] = np.random.choice([2, 3, 4], size=len(df_struct_raw))
+        if "sequence_order" not in df_struct_raw.columns:
+            df_struct_raw["sequence_order"] = df_struct_raw.groupby("corridor_name").cumcount() + 1
 
-        # Calculate micro-level metrics at the link level before grouping
-        df_struct_raw = df_struct_raw.sort_values(by=['corridor_name', 'sequence_order']).reset_index(drop=True)
-        df_struct_raw['delta_lanes'] = df_struct_raw.groupby('corridor_name')['road_width_lanes'].transform(lambda x: x - x.shift(-1)).fillna(0.0)
-        df_struct_raw['signal_density_proxy'] = 1000.0 / df_struct_raw['nearest_signal_dist_meters'].clip(lower=1.0)
-        df_struct_raw['friction_bus'] = 1.0 / (df_struct_raw['nearest_bus_stop_dist_meters'].clip(lower=1.0) * df_struct_raw.get('free_flow_travel_time_seconds', 300.0).clip(lower=1.0))
-
-        # ==============================================================================
-        # 3. CORRIDOR FILTER (THE DYNAMIC TOGGLE)
-        # ==============================================================================
-        section_title("Scope Control Panel")
-        corridors_available = sorted(df_struct_raw['corridor_name'].dropna().unique().tolist())
-        filter_options = ["All Corridors"] + corridors_available
-        
-        selected_corridor = st.selectbox(
-            "Select Target Corridor for Dynamic Diagnostic Analysis:", 
-            options=filter_options,
-            index=0
+        df_struct_raw = df_struct_raw.sort_values(["corridor_name", "sequence_order"]).reset_index(drop=True)
+        df_struct_raw["delta_lanes"] = (
+            df_struct_raw.groupby("corridor_name")["road_width_lanes"]
+            .transform(lambda x: x - x.shift(-1))
+            .fillna(0.0)
+        )
+        df_struct_raw["signal_density_proxy"] = 1000.0 / df_struct_raw["nearest_signal_dist_meters"].clip(lower=1.0)
+        ff_col = df_struct_raw["free_flow_travel_time_seconds"] if "free_flow_travel_time_seconds" in df_struct_raw.columns else pd.Series(300.0, index=df_struct_raw.index)
+        df_struct_raw["friction_bus"] = 1.0 / (
+            df_struct_raw["nearest_bus_stop_dist_meters"].clip(lower=1.0) * ff_col.clip(lower=1.0)
         )
 
-        # Apply spatial selection filter
-        if selected_corridor == "All Corridors":
-            df_active_subset = df_struct_raw
-        else:
-            df_active_subset = df_struct_raw[df_struct_raw['corridor_name'] == selected_corridor]
+        # ── Scope Control — Dual Level ────────────────────────────────────────
+        section_title("Scope Control Panel — Segment & Corridor Level")
+        corridors_h3 = sorted(df_struct_raw["corridor_name"].dropna().unique().tolist())
+        scope_col1, scope_col2 = st.columns([2, 1])
+        with scope_col1:
+            selected_corridor_h3 = st.selectbox(
+                "Select Corridor for Deep-Dive Analysis:",
+                options=["All Corridors"] + corridors_h3,
+                index=0,
+                key="h3_corridor_selector"
+            )
+        with scope_col2:
+            view_level = st.radio("Analysis Level:", ["Segment-Level", "Corridor-Level"], horizontal=True, key="h3_view_level")
 
-        # Aggregation execution based on filtered operational subset
-        df_struct = df_active_subset.groupby(['shapefile_segment_name', 'corridor_name']).agg(
-            mean_peak_tti=('travel_time_index_tti', lambda x: x[df_active_subset['derived_hour'].isin([8,9,10,17,18,19,20])].mean()),
-            mean_offpeak_tti=('travel_time_index_tti', lambda x: x[df_active_subset['derived_hour'].isin([23,0,1,2,3,4,5])].mean()),
-            delta_lanes=('delta_lanes', 'median'),
-            signal_density=('signal_density_proxy', 'mean'),
-            bus_friction=('friction_bus', 'mean'),
-            raw_lanes=('road_width_lanes', 'median'),
-            lat=('lat', 'mean'),
-            lon=('lon', 'mean')
+        df_h3_active = df_struct_raw if selected_corridor_h3 == "All Corridors" else df_struct_raw[df_struct_raw["corridor_name"] == selected_corridor_h3]
+
+        # ── Segment-level aggregation ─────────────────────────────────────────
+        peak_hours = [8, 9, 10, 17, 18, 19, 20]
+        offpeak_hours = [23, 0, 1, 2, 3, 4, 5]
+
+        def _seg_agg(sub_df):
+            hours = sub_df["derived_hour"]
+            tti = sub_df["travel_time_index_tti"]
+            return pd.Series({
+                "mean_peak_tti":    tti[hours.isin(peak_hours)].mean(),
+                "mean_offpeak_tti": tti[hours.isin(offpeak_hours)].mean(),
+                "delta_lanes":      sub_df["delta_lanes"].median(),
+                "signal_density":   sub_df["signal_density_proxy"].mean(),
+                "bus_friction":     sub_df["friction_bus"].mean(),
+                "raw_lanes":        sub_df["road_width_lanes"].median(),
+                "lat":              sub_df["lat"].mean(),
+                "lon":              sub_df["lon"].mean(),
+            })
+
+        df_seg = df_h3_active.groupby(
+            ["shapefile_segment_name", "corridor_name"]
+        ).apply(_seg_agg).reset_index().fillna(1.0)
+
+        # Research-blueprint thresholds: Q-I offpeak >= 1.5 AND peak >= 2.2
+        def _classify_seg(r):
+            op, pk = r["mean_offpeak_tti"], r["mean_peak_tti"]
+            if op >= 1.5 and pk >= 2.2:
+                return "Quadrant I: Persistent Congestion"
+            if op < 1.5 and pk >= 2.2:
+                return "Quadrant II: Temporal Congestion"
+            return "Quadrant III: Nominal Flow"
+
+        df_seg["classification"] = df_seg.apply(_classify_seg, axis=1)
+
+        # ── Corridor-level aggregation ────────────────────────────────────────
+        df_corr_h3 = df_seg.groupby("corridor_name").agg(
+            n_segments=("shapefile_segment_name", "count"),
+            mean_peak_tti=("mean_peak_tti", "mean"),
+            mean_offpeak_tti=("mean_offpeak_tti", "mean"),
+            pct_persistent=("classification", lambda x: (x == "Quadrant I: Persistent Congestion").mean() * 100),
+            pct_temporal=("classification", lambda x: (x == "Quadrant II: Temporal Congestion").mean() * 100),
+            mean_delta_lanes=("delta_lanes", "mean"),
+            mean_signal_density=("signal_density", "mean"),
+            lat=("lat", "mean"),
+            lon=("lon", "mean"),
         ).reset_index()
-
-        df_struct['mean_peak_tti'] = df_struct['mean_peak_tti'].fillna(df_struct['mean_peak_tti'].median() if not df_struct['mean_peak_tti'].empty else 1.0).clip(lower=1.0)
-        df_struct['mean_offpeak_tti'] = df_struct['mean_offpeak_tti'].fillna(df_struct['mean_peak_tti'] * 0.55).clip(lower=1.0)
-
-        df_struct['classification'] = np.where(
-            df_struct['mean_offpeak_tti'] >= 1.35, 'Structural Deficit',
-            np.where(df_struct['mean_peak_tti'] >= 1.50, 'Temporal Congestion', 'Optimal Flow')
+        df_corr_h3["corridor_class"] = df_corr_h3["pct_persistent"].apply(
+            lambda p: "Structurally Critical" if p >= 40 else ("Mixed" if p >= 15 else "Operationally Stable")
         )
 
-        # ==============================================================================
-        # 4. KPI HEADER ROW (ADAPTIVE TO FILTER)
-        # ==============================================================================
-        n_structural = int((df_struct['classification'] == 'Structural Deficit').sum())
-        n_temporal = int((df_struct['classification'] == 'Temporal Congestion').sum())
-        n_optimal = int((df_struct['classification'] == 'Optimal Flow').sum())
-
-        kpi_defs = [
-            ("Structural Deficits", n_structural, "#991B1B", "Permanent Geometric Limits"),
-            ("Temporal Hotspots", n_temporal, "#D97706", "Volume Driven Bottlenecks"),
-            ("Optimal Flow Links", n_optimal, "#166534", "Stable Operational Nodes"),
-            ("Monitored Segments", len(df_struct), "#1E293B", f"Total Nodes in {selected_corridor}"),
-        ]
-        render_kpi_row(kpi_defs)
+        # ── KPI Header Row ────────────────────────────────────────────────────
+        n_q1 = int((df_seg["classification"] == "Quadrant I: Persistent Congestion").sum())
+        n_q2 = int((df_seg["classification"] == "Quadrant II: Temporal Congestion").sum())
+        n_q3 = int((df_seg["classification"] == "Quadrant III: Nominal Flow").sum())
+        render_kpi_row([
+            ("Structural Deficits (Q-I)",   n_q1, "#991B1B", "Persistent off-peak + peak failures"),
+            ("Temporal Hotspots (Q-II)",   n_q2, "#D97706", "Rush-hour-only bottlenecks"),
+            ("Nominal Flow Links (Q-III)",  n_q3, "#166534", "Operating within design parameters"),
+            ("Segments Monitored",          len(df_seg), "#1E293B", f"Scope: {selected_corridor_h3}"),
+        ])
         st.write("")
         st.write("---")
 
-        # ==============================================================================
-        # 5. DYNAMIC OSM MAP & INVENTORY PANEL
-        # ==============================================================================
-        section_title(f"Spatial Matrix Map & Layout Inventory: {selected_corridor}")
-        st.markdown('<div class="h1-section-sub">Spatial distribution of asset deficits and flow constraints across selected segments</div>', unsafe_allow_html=True)
-        
-        c_map, c_panel = st.columns([3, 2])
-        
-        # Center the map on active coordinates
-        center_lat = df_struct["lat"].dropna().mean() if not df_struct["lat"].empty else 13.0827
-        center_lon = df_struct["lon"].dropna().mean() if not df_struct["lon"].empty else 80.2707
-        zoom_level = 11 if selected_corridor == "All Corridors" else 13
-        
-        with c_map:
-            m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_level, tiles="CartoDB positron")
-            for _, r in df_struct.dropna(subset=["lat", "lon"]).iterrows():
-                color = "#991B1B" if r['classification'] == 'Structural Deficit' else ("#D97706" if r['classification'] == 'Temporal Congestion' else "#166534")
-                folium.CircleMarker(
-                    [r["lat"], r["lon"]], radius=6 if selected_corridor != "All Corridors" else 5, 
-                    color=color, fill=True, opacity=0.9,
-                    tooltip=f"<b>Corridor:</b> {r['corridor_name']}<br><b>Link:</b> {r['shapefile_segment_name']}<br><b>Type:</b> {r['classification']}<br><b>Peak TTI:</b> {r['mean_peak_tti']:.2f}"
-                ).add_to(m)
-            st_folium(m, height=450, use_container_width=True, returned_objects=[], key=f"map_geo_structural_{selected_corridor}")
-            
-        with c_panel:
-            styled_df = df_struct.sort_values(by='mean_peak_tti', ascending=False).style.format({
-                'mean_peak_tti': '{:.2f}', 'mean_offpeak_tti': '{:.2f}',
-                'delta_lanes': '{:.1f}', 'signal_density': '{:.4f}', 'bus_friction': '{:.6f}'
-            }).set_properties(**{'font-size': '12px'}).set_table_styles([
-                 {'selector': 'th', 'props': [('background-color', '#1A293B'), ('color', 'white'), ('font-weight', '600')]}
-            ])
-            st.dataframe(styled_df, use_container_width=True, hide_index=True, height=410)
+        # ── Dynamic Insight Callout ───────────────────────────────────────────
+        if n_q1 > 0:
+            worst_seg = df_seg[df_seg["classification"] == "Quadrant I: Persistent Congestion"].sort_values("mean_offpeak_tti", ascending=False).iloc[0]
+            worst_corr = df_corr_h3.sort_values("pct_persistent", ascending=False).iloc[0]
+            render_callout(
+                f"🔴 <b>Worst Segment:</b> <code>{worst_seg['shapefile_segment_name']}</code> "
+                f"(Corridor: {worst_seg['corridor_name']}) — Off-Peak TTI: <b>{worst_seg['mean_offpeak_tti']:.2f}</b>, "
+                f"Peak TTI: <b>{worst_seg['mean_peak_tti']:.2f}</b>. "
+                f"This segment fails even under zero-volume night conditions, confirming a geometric capacity deficit. "
+                f"<br><br>🏗️ <b>Engineering Recommendation:</b> Immediate on-site audit for physical lane-drop points, "
+                f"poorly spaced bus bays, or signal clustering within 1,000 m. Capital intervention required — "
+                f"signal retiming alone will not resolve this node.<br><br>"
+                f"📊 <b>Worst Corridor:</b> <code>{worst_corr['corridor_name']}</code> — "
+                f"{worst_corr['pct_persistent']:.0f}% of its segments are Quadrant I Persistent.",
+                border_color="#991B1B"
+            )
         st.write("---")
 
-        # ==============================================================================
-        # 6. CORE DIAGNOSTIC VISUALIZATIONS
-        # ==============================================================================
-        section_title(f"Behavioral Diagnostics & Layout Friction Analysis ({selected_corridor})")
-        col_g1, col_g2 = st.columns(2)
-        
-        with col_g1:
-            fig_q = plt.figure(figsize=(6, 4.5), facecolor='white')
-            ax_q = fig_q.add_subplot(111, facecolor='white')
-            quad_colors = {'Structural Deficit': '#991B1B', 'Temporal Congestion': '#D97706', 'Optimal Flow': '#166534'}
-            
-            sns.scatterplot(
-                data=df_struct, x='mean_offpeak_tti', y='mean_peak_tti', 
-                hue='classification', palette=quad_colors, s=80, ax=ax_q, 
-                edgecolor='black', linewidth=0.5
+        # ── Map + Inventory Panel ─────────────────────────────────────────────
+        section_title(f"Spatial Structural Classification Map — {selected_corridor_h3}")
+        st.markdown('<div class="h1-section-sub">Color coding: Red = Persistent Structural Deficit | Amber = Temporal Demand | Green = Nominal</div>', unsafe_allow_html=True)
+
+        c_map_h3, c_panel_h3 = st.columns([3, 2])
+        center_lat_h3 = df_seg["lat"].dropna().mean() if not df_seg.empty else 13.0827
+        center_lon_h3 = df_seg["lon"].dropna().mean() if not df_seg.empty else 80.2707
+        zoom_h3 = 11 if selected_corridor_h3 == "All Corridors" else 13
+
+        QUAD_COLORS_H3 = {
+            "Quadrant I: Persistent Congestion": "#991B1B",
+            "Quadrant II: Temporal Congestion":  "#D97706",
+            "Quadrant III: Nominal Flow":        "#166534",
+        }
+
+        with c_map_h3:
+            m_h3 = folium.Map(location=[center_lat_h3, center_lon_h3], zoom_start=zoom_h3, tiles="CartoDB positron")
+
+            # Add a legend HTML element
+            legend_html_h3 = """
+            <div style="position:fixed;bottom:30px;left:30px;z-index:9999;background:white;
+                        padding:12px 16px;border-radius:8px;border:1px solid #CBD5E1;font-size:12px;font-family:sans-serif;">
+              <b style="color:#1E293B;">Structural Classification</b><br>
+              <span style="color:#991B1B;">&#9632;</span> Quadrant I: Persistent Congestion<br>
+              <span style="color:#D97706;">&#9632;</span> Quadrant II: Temporal Congestion<br>
+              <span style="color:#166534;">&#9632;</span> Quadrant III: Nominal Flow
+            </div>"""
+            m_h3.get_root().html.add_child(folium.Element(legend_html_h3))
+
+            display_df_h3 = df_seg if view_level == "Segment-Level" else df_corr_h3.rename(
+                columns={"corridor_name": "shapefile_segment_name", "corridor_class": "classification",
+                         "mean_peak_tti": "mean_peak_tti", "mean_offpeak_tti": "mean_offpeak_tti"}
             )
-            ax_q.axhline(1.50, color='#475569', linewidth=1.0, linestyle='--')
-            ax_q.axvline(1.35, color='#475569', linewidth=1.0, linestyle='--')
-            
-            ax_q.set_xlabel("Off-Peak TTI (23:00 - 05:00 IST)", color='#0F172A', fontsize=9, fontweight='bold')
-            ax_q.set_ylabel("Peak TTI (Commuter Windows)", color='#0F172A', fontsize=9, fontweight='bold')
-            ax_q.grid(True, linestyle=':', alpha=0.3)
-            ax_q.legend(fontsize=8, loc='upper left', facecolor='white')
-            style_axes(ax_q)
-            st.pyplot(fig_q)
-            st.caption("Behavioral quadrant mapping. Links in the top-right red zone indicate true structural capacity issues.")
+
+            for _, r in df_seg.dropna(subset=["lat", "lon"]).iterrows():
+                clr = QUAD_COLORS_H3.get(r["classification"], "#64748B")
+                radius = 7 if selected_corridor_h3 != "All Corridors" else 5
+                tooltip_html = (
+                    f"<div style='font-family:sans-serif;font-size:12px;min-width:210px'>"
+                    f"<b style='color:#1E293B'>{r['shapefile_segment_name']}</b><br>"
+                    f"<span style='color:#475569'>{r['corridor_name']}</span><br><hr style='margin:4px 0'>"
+                    f"<b>Classification:</b> {r['classification']}<br>"
+                    f"<b>Peak TTI:</b> {r['mean_peak_tti']:.3f} &nbsp; <b>Off-Peak TTI:</b> {r['mean_offpeak_tti']:.3f}<br>"
+                    f"<b>Lane Drop &Delta;:</b> {r['delta_lanes']:.1f} &nbsp; <b>Signal Density:</b> {r['signal_density']:.3f}<br>"
+                    f"<b>Bus Friction:</b> {r['bus_friction']:.6f}<br>"
+                    f"<b>Lanes:</b> {r['raw_lanes']:.0f}<br><hr style='margin:4px 0'>"
+                    f"<b style='color:#991B1B'>Action:</b> "
+                    + ("Capital infrastructure audit" if r["classification"] == "Quadrant I: Persistent Congestion"
+                       else ("Signal retiming review" if r["classification"] == "Quadrant II: Temporal Congestion"
+                             else "Routine monitoring"))
+                    + "</div>"
+                )
+                folium.CircleMarker(
+                    location=[r["lat"], r["lon"]],
+                    radius=radius,
+                    color=clr,
+                    fill=True,
+                    fill_opacity=0.88,
+                    tooltip=folium.Tooltip(tooltip_html, sticky=True),
+                ).add_to(m_h3)
+
+            st_folium(m_h3, height=480, use_container_width=True, returned_objects=[],
+                      key=f"map_h3_{selected_corridor_h3}_{view_level}")
+
+        with c_panel_h3:
+            if view_level == "Segment-Level":
+                display_cols = ["shapefile_segment_name", "corridor_name", "classification",
+                                "mean_peak_tti", "mean_offpeak_tti", "delta_lanes", "signal_density"]
+                st.markdown("**Segment Classification Ledger**")
+                st.dataframe(
+                    df_seg[display_cols].sort_values("mean_peak_tti", ascending=False)
+                    .style.format({"mean_peak_tti": "{:.3f}", "mean_offpeak_tti": "{:.3f}",
+                                   "delta_lanes": "{:.1f}", "signal_density": "{:.3f}"})
+                    .set_properties(**{"font-size": "11px"})
+                    .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"),
+                                                                     ("color", "white"), ("font-weight", "600")]}])
+                    .map(lambda v: "color:#991B1B;font-weight:700" if v == "Quadrant I: Persistent Congestion"
+                              else ("color:#D97706;font-weight:700" if v == "Quadrant II: Temporal Congestion"
+                                    else "color:#166534"), subset=["classification"]),
+                    use_container_width=True, hide_index=True, height=450
+                )
+            else:
+                st.markdown("**Corridor Aggregate Summary**")
+                st.dataframe(
+                    df_corr_h3[["corridor_name", "n_segments", "mean_peak_tti", "mean_offpeak_tti",
+                                 "pct_persistent", "pct_temporal", "corridor_class"]]
+                    .sort_values("pct_persistent", ascending=False)
+                    .style.format({"mean_peak_tti": "{:.3f}", "mean_offpeak_tti": "{:.3f}",
+                                   "pct_persistent": "{:.1f}%", "pct_temporal": "{:.1f}%"})
+                    .set_properties(**{"font-size": "11px"})
+                    .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"),
+                                                                     ("color", "white"), ("font-weight", "600")]}]),
+                    use_container_width=True, hide_index=True, height=450
+                )
+        st.write("---")
+
+        # ── Chart Suite: Behavioral Diagnostics ───────────────────────────────
+        section_title("Behavioral Diagnostics & Friction Attribution")
+        col_g1, col_g2 = st.columns(2)
+
+        with col_g1:
+            fig_q3 = plt.figure(figsize=(6.5, 5), facecolor="white")
+            ax_q3 = fig_q3.add_subplot(111, facecolor="white")
+            quad_palette = {
+                "Quadrant I: Persistent Congestion": "#991B1B",
+                "Quadrant II: Temporal Congestion":  "#D97706",
+                "Quadrant III: Nominal Flow":        "#166534",
+            }
+            for quad, grp in df_seg.groupby("classification"):
+                ax_q3.scatter(
+                    grp["mean_offpeak_tti"], grp["mean_peak_tti"],
+                    c=quad_palette[quad], label=quad, s=75, alpha=0.82,
+                    edgecolors="white", linewidth=0.6
+                )
+            # Annotate worst Q-I segment
+            if n_q1 > 0:
+                ws = df_seg[df_seg["classification"] == "Quadrant I: Persistent Congestion"].sort_values("mean_offpeak_tti", ascending=False).iloc[0]
+                ax_q3.annotate(
+                    ws["shapefile_segment_name"][:18],
+                    xy=(ws["mean_offpeak_tti"], ws["mean_peak_tti"]),
+                    xytext=(ws["mean_offpeak_tti"] + 0.05, ws["mean_peak_tti"] + 0.08),
+                    fontsize=7, color="#991B1B", fontweight="bold",
+                    arrowprops=dict(arrowstyle="->", color="#991B1B", lw=0.8)
+                )
+            ax_q3.axhline(2.2, color="#475569", linewidth=1.1, linestyle="--", alpha=0.7)
+            ax_q3.axvline(1.5, color="#475569", linewidth=1.1, linestyle="--", alpha=0.7)
+            ax_q3.text(1.51, ax_q3.get_ylim()[0] + 0.05, r"Off-peak threshold 1.5", fontsize=7, color="#475569", fontweight="bold")
+            ax_q3.text(ax_q3.get_xlim()[0] + 0.01, 2.22, r"Peak threshold 2.2", fontsize=7, color="#475569", fontweight="bold")
+            ax_q3.set_xlabel(r"Median Off-Peak TTI ($\Omega_{\mathrm{offpeak}}$, 23:00–05:00 IST)",
+                             color="#0F172A", fontsize=9, fontweight="bold")
+            ax_q3.set_ylabel(r"Median Peak TTI ($\Omega_{\mathrm{peak}}$, 08–10 / 17–20 IST)",
+                             color="#0F172A", fontsize=9, fontweight="bold")
+            ax_q3.set_title("2D Structural Dispersion Matrix", fontsize=10, fontweight="bold", color="#0F172A")
+            ax_q3.legend(fontsize=7.5, loc="upper left", facecolor="white", edgecolor="#CBD5E1", labelcolor="#0F172A")
+            style_axes(ax_q3)
+            plt.tight_layout()
+            st.pyplot(fig_q3)
+            st.caption("Segments in the top-right red zone fail regardless of traffic volume — infrastructure is the constraint.")
 
         with col_g2:
-            fig_l = plt.figure(figsize=(6, 4.5), facecolor='white')
-            ax_l = fig_l.add_subplot(111, facecolor='white')
-            
-            # Use boxplot for "All Corridors" and a detailed barplot/pointplot if deep-diving a single corridor
-            if selected_corridor == "All Corridors":
-                sns.boxplot(data=df_struct, x='delta_lanes', y='mean_peak_tti', color='#1F77B4', ax=ax_l, width=0.4)
-                ax_l.set_xlabel(r"Downstream Lane Drop Delta ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
+            fig_lane_h3 = plt.figure(figsize=(6.5, 5), facecolor="white")
+            ax_lane_h3 = fig_lane_h3.add_subplot(111, facecolor="white")
+            if selected_corridor_h3 == "All Corridors":
+                sns.boxplot(
+                    data=df_seg, x="delta_lanes", y="mean_peak_tti",
+                    palette=["#CBD5E1", "#D97706", "#991B1B"],
+                    ax=ax_lane_h3, width=0.5
+                )
+                ax_lane_h3.set_xlabel(r"Downstream Lane Drop ($\Delta$Lanes per Segment)",
+                                      color="#0F172A", fontsize=9, fontweight="bold")
+                ax_lane_h3.set_ylabel("Mean Peak TTI", color="#0F172A", fontsize=9, fontweight="bold")
+                ax_lane_h3.set_title(r"Peak TTI Distribution by $\Delta$Lanes",
+                                     fontsize=10, fontweight="bold", color="#0F172A")
             else:
-                sns.barplot(data=df_struct, x='shapefile_segment_name', y='delta_lanes', color='#E11D48', ax=ax_l)
-                ax_l.set_xticklabels(ax_l.get_xticklabels(), rotation=45, ha='right', fontsize=8)
-                ax_l.set_xlabel("Segment Path (Downstream Sequence)", color='#0F172A', fontsize=9, fontweight='bold')
-                ax_l.set_ylabel(r"Physical Lane Drops ($\Delta$Lanes)", color='#0F172A', fontsize=9, fontweight='bold')
-                
-            ax_l.set_ylabel("Peak-Hour Travel Time Index" if selected_corridor == "All Corridors" else "Lane Drop Severity", color='#0F172A', fontsize=9, fontweight='bold')
-            ax_l.grid(axis='y', linestyle=':', alpha=0.4)
-            style_axes(ax_l)
-            st.pyplot(fig_l)
-            st.caption("Friction evaluation: Tracking structural bottleneck capacity limitations along active points.")
+                colors_bar = [QUAD_COLORS_H3.get(c, "#1E40AF") for c in df_seg["classification"]]
+                bars_h3 = ax_lane_h3.bar(
+                    range(len(df_seg)), df_seg["delta_lanes"].values,
+                    color=colors_bar, edgecolor="white", linewidth=0.5
+                )
+                if len(df_seg) <= 15:
+                    ax_lane_h3.set_xticks(range(len(df_seg)))
+                    ax_lane_h3.set_xticklabels(
+                        [s[:14] for s in df_seg["shapefile_segment_name"].values],
+                        rotation=45, ha="right", fontsize=7, color="#0F172A"
+                    )
+                ax_lane_h3.set_ylabel(r"Physical Lane Drop ($\Delta$Lanes)", color="#0F172A", fontsize=9, fontweight="bold")
+                ax_lane_h3.set_title("Per-Segment Lane Drop Profile", fontsize=10, fontweight="bold", color="#0F172A")
+            ax_lane_h3.grid(axis="y", linestyle=":", alpha=0.4)
+            style_axes(ax_lane_h3)
+            plt.tight_layout()
+            st.pyplot(fig_lane_h3)
+            st.caption("Positive delta values signal downstream road narrowing — a primary geometric chokepoint driver.")
 
-        # ==============================================================================
-        # 7. PARTIAL DEPENDENCE ANALYSIS
-        # ==============================================================================
+        # ── Mann-Whitney U Test ───────────────────────────────────────────────
         st.write("---")
-        section_title(f"Partial Dependence Topographical Interpretations ({selected_corridor})")
-        col_g3, col_g4 = st.columns(2)
+        section_title("Non-Parametric Validation — Mann-Whitney U Test (Lane Drop Cohorts)")
         
-        with col_g3:
-            fig_f = plt.figure(figsize=(6, 4.2), facecolor='white')
-            ax_f = fig_f.add_subplot(111, facecolor='white')
+        try:
+            from scipy import stats as _scipy_stats
+            has_scipy_h3 = True
+        except ImportError:
+            _scipy_stats = None
+            has_scipy_h3 = False
+
+        df_h3_mw = df_h3_active.copy()
+        p_drop   = df_h3_mw[df_h3_mw["delta_lanes"] > 0]["travel_time_index_tti"].dropna()
+        p_uniform= df_h3_mw[df_h3_mw["delta_lanes"] <= 0]["travel_time_index_tti"].dropna()
+        
+        if has_scipy_h3 and len(p_drop) >= 5 and len(p_uniform) >= 5:
+            mw_stat, mw_p = _scipy_stats.mannwhitneyu(p_drop, p_uniform, alternative="greater")
+            mw_chip_color = "#991B1B" if mw_p < 0.05 else "#166534"
+            mw_verdict = "✅ Lane drops cause significantly higher TTI (p < 0.05)" if mw_p < 0.05 else "⚠️ Difference not statistically significant at p = 0.05"
+            mwc1, mwc2, mwc3 = st.columns(3)
+            with mwc1:
+                st.markdown(f'<div class="h1-kpi-card"><div class="h1-kpi-label">Mann-Whitney U Statistic</div><div class="h1-kpi-value" style="color:#1E40AF">{mw_stat:,.0f}</div><div class="h1-kpi-sub">Lane drop vs uniform cohort</div></div>', unsafe_allow_html=True)
+            with mwc2:
+                st.markdown(f'<div class="h1-kpi-card"><div class="h1-kpi-label">p-value</div><div class="h1-kpi-value" style="color:{mw_chip_color}">{mw_p:.4f}</div><div class="h1-kpi-sub">One-sided (greater)</div></div>', unsafe_allow_html=True)
+            with mwc3:
+                st.markdown(f'<div class="h1-kpi-card"><div class="h1-kpi-label">Median TTI (drop vs uniform)</div><div class="h1-kpi-value" style="color:#0F172A">{p_drop.median():.2f} vs {p_uniform.median():.2f}</div><div class="h1-kpi-sub">Raw cohort comparison</div></div>', unsafe_allow_html=True)
+            st.write("")
+            render_callout(f"<b>Verdict:</b> {mw_verdict}<br>H₀: Median TTI of lane-drop segments = Median TTI of uniform segments. "
+                           f"Drop cohort n={len(p_drop)}, Uniform cohort n={len(p_uniform)}.", border_color=mw_chip_color)
+        else:
+            st.info("Insufficient data or missing SciPy package to run Mann-Whitney U test on this selection.")
+
+        # ── Partial Dependence Plots ──────────────────────────────────────────
+        st.write("---")
+        section_title("Partial Dependence Analysis — Infrastructure Proximity Curves")
+        col_g3, col_g4 = st.columns(2)
+
+        def _pdp_plot(ax, x_col, y_col, df_in, xlabel, ylabel, title, highlight_thresh=None):
+            if len(df_in) < 3:
+                ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center", transform=ax.transAxes, color="#0F172A")
+                return
+            n_unique = df_in[x_col].nunique()
+            n_bins = max(2, min(10, n_unique))
+            df_s = df_in.sort_values(x_col).copy()
+            try:
+                df_s["_b"] = pd.qcut(df_s[x_col], q=n_bins, duplicates="drop")
+            except ValueError:
+                df_s["_b"] = pd.cut(df_s[x_col], bins=n_bins, duplicates="drop")
+            trend = df_s.groupby("_b", observed=False)[y_col].median()
+            bin_mid = df_s.groupby("_b", observed=False)[x_col].median()
             
-            if len(df_struct) > 2:
-                df_sorted_bus = df_struct.sort_values(by='bus_friction')
-                # Dynamically set quantile bins based on available unique data points
-                n_unique_bus = df_sorted_bus['bus_friction'].nunique()
-                num_bins_bus = max(2, min(10, n_unique_bus))
-                
-                df_sorted_bus['_bin'] = pd.qcut(df_sorted_bus['bus_friction'], q=num_bins_bus, duplicates='drop')
-                trend_bus = df_sorted_bus.groupby('_bin', observed=False)['mean_offpeak_tti'].median()
-                bin_mid_bus = df_sorted_bus.groupby('_bin', observed=False)['bus_friction'].median()
-                
-                ax_f.scatter(df_struct['bus_friction'], df_struct['mean_offpeak_tti'], color='#CBD5E1', s=35, alpha=0.7, edgecolors='black', linewidth=0.3)
-                ax_f.plot(bin_mid_bus.values, trend_bus.values, color='#1A293B', linewidth=2.5, marker='o', label='Median Drift')
-            else:
-                ax_f.text(0.5, 0.5, "Insufficient segment sequence data\nto draw trendline", ha='center', va='center')
-                
-            ax_f.set_xlabel("Bus-Stop Friction Index ($F_{\text{bus}}$)", color='#0F172A', fontsize=9, fontweight='bold')
-            ax_f.set_ylabel("Median Off-Peak TTI", color='#0F172A', fontsize=9, fontweight='bold')
-            ax_f.grid(True, linestyle=':', alpha=0.3)
-            style_axes(ax_f)
-            st.pyplot(fig_f)
-            st.caption("Marginal effect curve showing how proximity to bus stops slows down vehicles under zero-volume late-night conditions.")
+            # High contrast dark points and black trendline
+            ax.scatter(df_in[x_col], df_in[y_col], color="#64748B", s=35, alpha=0.75, edgecolors="none")
+            ax.plot(bin_mid.values, trend.values, color="#0F172A", linewidth=2.5, marker="o", markersize=5)
+            if highlight_thresh is not None:
+                ax.axvline(highlight_thresh, color="#991B1B", linestyle=":", linewidth=1.2)
+                ax.text(highlight_thresh + ax.get_xlim()[1] * 0.01, ax.get_ylim()[0] + 0.05,
+                        f"Threshold {highlight_thresh:.1f}m", fontsize=7, color="#991B1B", fontweight="bold")
+            ax.set_xlabel(xlabel, color="#0F172A", fontsize=9, fontweight="bold")
+            ax.set_ylabel(ylabel, color="#0F172A", fontsize=9, fontweight="bold")
+            ax.set_title(title, fontsize=10, fontweight="bold", color="#0F172A")
+            ax.grid(True, linestyle=":", alpha=0.4)
+            style_axes(ax)
+
+        with col_g3:
+            fig_pdp_bus = plt.figure(figsize=(6.5, 4.5), facecolor="white")
+            ax_pdp_bus = fig_pdp_bus.add_subplot(111, facecolor="white")
+            _pdp_plot(ax_pdp_bus, "bus_friction", "mean_offpeak_tti", df_seg,
+                      r"Bus-Stop Friction Index ($F_{\mathrm{bus}}$)",
+                      "Median Off-Peak TTI",
+                      "PDP: Bus Friction vs Off-Peak Delay")
+            plt.tight_layout()
+            st.pyplot(fig_pdp_bus)
+            st.caption("Isolates where bus proximity + narrow lanes generates baseline friction even under zero demand.")
 
         with col_g4:
-            fig_sd = plt.figure(figsize=(6, 4.2), facecolor='white')
-            ax_sd = fig_sd.add_subplot(111, facecolor='white')
-            
-            if len(df_struct) > 2:
-                df_sorted_sig = df_struct.sort_values(by='signal_density')
-                n_unique_sig = df_sorted_sig['signal_density'].nunique()
-                num_bins_sig = max(2, min(10, n_unique_sig))
-                
-                df_sorted_sig['_bin'] = pd.qcut(df_sorted_sig['signal_density'], q=num_bins_sig, duplicates='drop')
-                trend_sig = df_sorted_sig.groupby('_bin', observed=False)['mean_offpeak_tti'].median()
-                bin_mid_sig = df_sorted_sig.groupby('_bin', observed=False)['signal_density'].median()
-                
-                ax_sd.scatter(df_struct['signal_density'], df_struct['mean_offpeak_tti'], color='#CBD5E1', s=35, alpha=0.7, edgecolors='black', linewidth=0.3)
-                ax_sd.plot(bin_mid_sig.values, trend_sig.values, color='#1A293B', linewidth=2.5, marker='o', label='Median Drift')
-            else:
-                ax_sd.text(0.5, 0.5, "Insufficient segment sequence data\nto draw trendline", ha='center', va='center')
-                
-            ax_sd.set_xlabel("Signal Buffer Density Score ($D_{\text{sig}}$)", color='#0F172A', fontsize=9, fontweight='bold')
-            ax_sd.set_ylabel("Median Off-Peak TTI", color='#0F172A', fontsize=9, fontweight='bold')
-            ax_sd.grid(True, linestyle=':', alpha=0.3)
-            style_axes(ax_sd)
-            st.pyplot(fig_sd)
-            st.caption("Identifies spatial thresholds where clustering of consecutive traffic lights blocks baseline speeds.")
+            fig_pdp_sig = plt.figure(figsize=(6.5, 4.5), facecolor="white")
+            ax_pdp_sig = fig_pdp_sig.add_subplot(111, facecolor="white")
+            _pdp_plot(ax_pdp_sig, "signal_density", "mean_offpeak_tti", df_seg,
+                      r"Signal Density Proxy ($D_{\mathrm{sig}}$, higher = denser)",
+                      "Median Off-Peak TTI",
+                      "PDP: Signal Density vs Off-Peak Delay",
+                      highlight_thresh=df_seg["signal_density"].quantile(0.75) if len(df_seg) > 3 else None)
+            plt.tight_layout()
+            st.pyplot(fig_pdp_sig)
+            st.caption("Identifies the density threshold at which signal clustering creates permanent speed decay.")
+
+        # ── Corridor-level summary table ──────────────────────────────────────
+        st.write("---")
+        section_title("Corridor-Level Structural Performance Summary")
+        st.dataframe(
+            df_corr_h3[["corridor_name", "n_segments", "mean_peak_tti", "mean_offpeak_tti",
+                         "pct_persistent", "pct_temporal", "mean_delta_lanes", "mean_signal_density", "corridor_class"]]
+            .sort_values("pct_persistent", ascending=False)
+            .rename(columns={
+                "corridor_name": "Corridor", "n_segments": "Segments",
+                "mean_peak_tti": "Avg Peak TTI", "mean_offpeak_tti": "Avg Off-Peak TTI",
+                "pct_persistent": "% Persistent", "pct_temporal": "% Temporal",
+                "mean_delta_lanes": "Avg ΔLanes", "mean_signal_density": "Avg Signal Density",
+                "corridor_class": "Structural Rating"
+            })
+            .style.format({"Avg Peak TTI": "{:.3f}", "Avg Off-Peak TTI": "{:.3f}",
+                           "% Persistent": "{:.1f}%", "% Temporal": "{:.1f}%",
+                           "Avg ΔLanes": "{:.2f}", "Avg Signal Density": "{:.3f}"})
+            .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"),
+                                                             ("color", "white"), ("font-weight", "600")]}]),
+            use_container_width=True, hide_index=True
+        )
+
+        # ── Policy Matrix ─────────────────────────────────────────────────────
+        st.write("---")
+        section_title("Capital Expenditure Policy Translation Matrix")
+        policy_h3 = pd.DataFrame([
+            {"Analytical Finding": "Quadrant I: High Off-Peak + Peak TTI", "Statistical Signal": "Off-peak TTI ≥ 1.5 ∩ Peak TTI ≥ 2.2", "Targeted CUMTA Intervention": "Capital civil works: lane widening, bus bay recessing, signal spacing audit"},
+            {"Analytical Finding": "Quadrant II: Peak-only overload", "Statistical Signal": "Off-peak TTI < 1.5 ∩ Peak TTI ≥ 2.2", "Targeted CUMTA Intervention": "Adaptive signal retiming and demand-side transit management"},
+            {"Analytical Finding": "High Signal Density + PDP inflection", "Statistical Signal": "Signal density > 75th percentile", "Targeted CUMTA Intervention": "Signal consolidation or SCATS coordination within 1,000 m radius"},
+            {"Analytical Finding": "Lane Drop + High Bus Friction", "Statistical Signal": "ΔLanes > 0 ∩ F_bus > median", "Targeted CUMTA Intervention": "Recessed bus bay construction and downstream lane addition"},
+            {"Analytical Finding": "Significant Mann-Whitney (p < 0.05)", "Statistical Signal": "Lane-drop cohort TTI > uniform cohort", "Targeted CUMTA Intervention": "Confirm geometry as root cause; prioritize for capital redesign"},
+        ])
+        st.table(policy_h3)
 
     
      # =============================================================================
