@@ -2184,7 +2184,9 @@ def main():
             style_axes(ax_sd)
             st.pyplot(fig_sd)
             st.caption("Identifies spatial thresholds where clustering of consecutive traffic lights blocks baseline speeds.")
-    # =============================================================================
+
+    
+     # =============================================================================
     # MODULE TAB 4: HYPOTHESIS 4 - WEATHER-DRIVEN VARIANCE
     # =============================================================================
     elif selected_tab == "Hypothesis 4: Weather-Driven Variance":
@@ -2296,11 +2298,11 @@ def main():
  
         top_seg = segment_report_df.iloc[0]
         kpi_defs = [
-            ("Most rain-sensitive segment", top_seg['segment_name'].split('_')[0], "#e74c3c", top_seg['corridor']),
-            ("Peak delay inflation", f"{top_seg['delay_inflation']*100:.1f}%", "#f1c40f", "Heavy monsoon vs dry baseline"),
-            ("Segments monitored", f"{len(segment_report_df)}", "#3498db", "Across all corridors"),
-            ("Avg dry-baseline TTI", f"{segment_report_df['dry_base_tti'].mean():.2f}", "#2ecc71", "Network reference point"),
-        ]
+                        ("Most rain-sensitive segment", top_seg['segment_name'], "#e74c3c", f"Corridor: {top_seg['corridor']}"),
+                        ("Peak delay inflation", f"{top_seg['delay_inflation']*100:.1f}%", "#f1c40f", "Heavy monsoon vs dry baseline"),
+                        ("Segments monitored", f"{len(segment_report_df)}", "#3498db", "Across all corridors"),
+                        ("Avg dry-baseline TTI", f"{segment_report_df['dry_base_tti'].mean():.2f}", "#2ecc71", "Network reference point"),
+                    ]
         render_kpi_row(kpi_defs)
         st.write("")
         st.write("---")
@@ -2481,6 +2483,9 @@ def main():
             f"sensitivity slope.",
             border_color="#e74c3c"
         )
+ 
+ 
+
  
  
 
@@ -2930,11 +2935,19 @@ def main():
                 "The sequential displacement test cannot run on this dataset."
             )
         else:
+            # FIX 1: drop_duplicates on execution_timestamp before merging. Without
+            # this, duplicate timestamps for the same segment turn the join below
+            # into a many-to-many merge that can multiply row counts unexpectedly
+            # (and, on a real feed with repeated readings, hang or blow up memory).
             def _build_pair_series(flyover_seg, downstream_seg):
-                fl = df_fetched.loc[df_fetched['shapefile_segment_name'] == flyover_seg, ['execution_timestamp', 'travel_time_index_tti']] \
-                    .rename(columns={'travel_time_index_tti': 'flyover_tti'})
-                ds = df_fetched.loc[df_fetched['shapefile_segment_name'] == downstream_seg, ['execution_timestamp', 'travel_time_index_tti']] \
-                    .rename(columns={'travel_time_index_tti': 'downstream_tti'})
+                fl = (df_fetched.loc[df_fetched['shapefile_segment_name'] == flyover_seg,
+                                      ['execution_timestamp', 'travel_time_index_tti']]
+                      .drop_duplicates(subset='execution_timestamp')
+                      .rename(columns={'travel_time_index_tti': 'flyover_tti'}))
+                ds = (df_fetched.loc[df_fetched['shapefile_segment_name'] == downstream_seg,
+                                      ['execution_timestamp', 'travel_time_index_tti']]
+                      .drop_duplicates(subset='execution_timestamp')
+                      .rename(columns={'travel_time_index_tti': 'downstream_tti'}))
                 return pd.merge(fl, ds, on='execution_timestamp', how='inner')
 
             pair_records = []
@@ -2943,11 +2956,11 @@ def main():
                 merged = _build_pair_series(prow['flyover_segment'], prow['downstream_segment'])
                 if len(merged) < 20:
                     continue
-                
+
                 # Dynamic 90th percentile thresholding for genuine congestion
                 fl_thresh = merged['flyover_tti'].quantile(0.90)
                 ds_thresh = merged['downstream_tti'].quantile(0.90)
-                
+
                 merged['flyover_congested'] = merged['flyover_tti'] > fl_thresh
                 merged['downstream_congested'] = merged['downstream_tti'] > ds_thresh
                 merged['displacement_event'] = (~merged['flyover_congested']) & (merged['downstream_congested'])
@@ -3052,62 +3065,91 @@ def main():
 
                 feat_cols_h7 = ['flyover_congested_f', 'flyover_tti_f', 'hour_sin', 'hour_cos']
                 feat_labels_h7 = ['Flyover congested (0/1)', 'Flyover TTI', 'Hour (sin)', 'Hour (cos)']
-                
+
                 X_h7 = pooled[feat_cols_h7]
                 y_h7 = pooled['downstream_congested'].astype(int)
 
                 if len(pooled) > 50:
                     try:
                         from sklearn.ensemble import RandomForestClassifier
-                        from sklearn.model_selection import cross_val_score
-                        
-                        rf_model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
-                        cv_scores = cross_val_score(rf_model, X_h7, y_h7, cv=5, scoring='roc_auc')
-                        rf_model.fit(X_h7, y_h7)
-                        
-                        importances = pd.DataFrame({
-                            'feature': feat_labels_h7,
-                            'importance': rf_model.feature_importances_
-                        }).sort_values('importance', ascending=False)
-                        
-                        top_predictor = importances.iloc[0]['feature']
-                        
-                        kpi_ml_h7 = [
-                            ("Model", "Random Forest Classifier", "#3498db", "Non-linear sequential topology mapping"),
-                            ("CV AUC (mean ± std)", f"{cv_scores.mean():.3f} ± {cv_scores.std():.3f}", "#2ecc71", "5-fold cross-validated"),
-                            ("Paired intervals modeled", f"{len(pooled):,}", "#e74c3c", f"Across {len(pairs_report)} pairs"),
-                            ("Top predictor", top_predictor, "#f1c40f", "Highest feature importance"),
-                        ]
-                        render_kpi_row(kpi_ml_h7)
-                        st.write("")
+                        from sklearn.model_selection import cross_val_score, StratifiedKFold
 
-                        fig_imp_h7, ax_imp_h7 = plt.subplots(figsize=(9, 3))
-                        imp_plot_h7 = importances.sort_values('importance')
-                        ax_imp_h7.barh(imp_plot_h7['feature'], imp_plot_h7['importance'], color='#e74c3c', edgecolor='white')
-                        ax_imp_h7.set_xlabel("Feature importance (Gini)", fontsize=9, fontweight='bold', color='#1a1a2e')
-                        ax_imp_h7.grid(axis='x', linestyle=':', alpha=0.4)
-                        style_axes(ax_imp_h7)
-                        plt.tight_layout()
-                        st.pyplot(fig_imp_h7)
+                        # FIX 2a: guard the class balance BEFORE calling cross_val_score.
+                        # cv=5 with StratifiedKFold throws ValueError ("n_splits=5 cannot
+                        # be greater than the number of members in each class") whenever
+                        # the rarer class (usually 'downstream_congested'==True, since it's
+                        # thresholded at the 90th percentile) has fewer than 5 members in
+                        # the pooled set — a very plausible case with few pairs / a small
+                        # feed. That ValueError previously propagated uncaught (the except
+                        # block only caught ImportError) and crashed the whole tab.
+                        n_pos = int(y_h7.sum())
+                        n_neg = int(len(y_h7) - n_pos)
+                        min_class_count = min(n_pos, n_neg)
 
-                        if top_predictor in ('Flyover congested (0/1)', 'Flyover TTI'):
-                            render_callout(
-                                f"📐 <b>Sequential displacement confirmed:</b> the flyover's own status is the "
-                                f"top predictor of downstream exit congestion (CV AUC {cv_scores.mean():.3f}), "
-                                "ahead of time-of-day. This is direct, model-validated evidence that the flyover-exit pair "
-                                "shares a displacement relationship rather than the exit failing independently.",
-                                border_color="#e74c3c"
+                        if min_class_count < 2:
+                            st.info(
+                                f"Only {n_pos} 'downstream congested' events (and {n_neg} clear events) exist "
+                                "across all pooled pairs — too few of one class to cross-validate a classifier "
+                                "reliably. Try lowering the 20-interval minimum per pair, or check that "
+                                "flyover/downstream tagging is picking up more than a handful of pairs."
                             )
                         else:
-                            render_callout(
-                                f"📐 <b>No strong sequential displacement signal:</b> time-of-day predicts downstream exit "
-                                "congestion better than the paired flyover's own status — suggesting the exit's congestion "
-                                "is driven mainly by its own local demand pattern, not by the flyover pushing load onto it.",
-                                border_color="#3498db"
-                            )
-                            
+                            # Never ask for more folds than the rarer class can support.
+                            n_folds = max(2, min(5, min_class_count))
+                            cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+
+                            rf_model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+                            cv_scores = cross_val_score(rf_model, X_h7, y_h7, cv=cv, scoring='roc_auc')
+                            rf_model.fit(X_h7, y_h7)
+
+                            importances = pd.DataFrame({
+                                'feature': feat_labels_h7,
+                                'importance': rf_model.feature_importances_
+                            }).sort_values('importance', ascending=False)
+
+                            top_predictor = importances.iloc[0]['feature']
+
+                            kpi_ml_h7 = [
+                                ("Model", "Random Forest Classifier", "#3498db", f"{n_folds}-fold CV (auto-reduced for class balance)"),
+                                ("CV AUC (mean ± std)", f"{cv_scores.mean():.3f} ± {cv_scores.std():.3f}", "#2ecc71", f"{n_folds}-fold cross-validated"),
+                                ("Paired intervals modeled", f"{len(pooled):,}", "#e74c3c", f"Across {len(pairs_report)} pairs"),
+                                ("Top predictor", top_predictor, "#f1c40f", "Highest feature importance"),
+                            ]
+                            render_kpi_row(kpi_ml_h7)
+                            st.write("")
+
+                            fig_imp_h7, ax_imp_h7 = plt.subplots(figsize=(9, 3))
+                            imp_plot_h7 = importances.sort_values('importance')
+                            ax_imp_h7.barh(imp_plot_h7['feature'], imp_plot_h7['importance'], color='#e74c3c', edgecolor='white')
+                            ax_imp_h7.set_xlabel("Feature importance (Gini)", fontsize=9, fontweight='bold', color='#1a1a2e')
+                            ax_imp_h7.grid(axis='x', linestyle=':', alpha=0.4)
+                            style_axes(ax_imp_h7)
+                            plt.tight_layout()
+                            st.pyplot(fig_imp_h7)
+
+                            if top_predictor in ('Flyover congested (0/1)', 'Flyover TTI'):
+                                render_callout(
+                                    f"📐 <b>Sequential displacement confirmed:</b> the flyover's own status is the "
+                                    f"top predictor of downstream exit congestion (CV AUC {cv_scores.mean():.3f}), "
+                                    "ahead of time-of-day. This is direct, model-validated evidence that the flyover-exit pair "
+                                    "shares a displacement relationship rather than the exit failing independently.",
+                                    border_color="#e74c3c"
+                                )
+                            else:
+                                render_callout(
+                                    f"📐 <b>No strong sequential displacement signal:</b> time-of-day predicts downstream exit "
+                                    "congestion better than the paired flyover's own status — suggesting the exit's congestion "
+                                    "is driven mainly by its own local demand pattern, not by the flyover pushing load onto it.",
+                                    border_color="#3498db"
+                                )
+
                     except ImportError:
                         st.warning("`scikit-learn` is not installed in your environment. The Random Forest classification cross-check has been bypassed. Run `pip install scikit-learn` to enable this module.")
+                    except Exception as e:
+                        # FIX 2b: catch-all so any other model-fitting edge case
+                        # (degenerate features, singular matrix, etc.) degrades this
+                        # one section instead of crashing the whole tab.
+                        st.warning(f"The ML cross-check could not be fit on this pooled dataset ({type(e).__name__}: {e}). The rest of this tab is unaffected.")
                 else:
                     st.info("Not enough paired intervals to fit a reliable cross-validated model on this dataset.")
 
