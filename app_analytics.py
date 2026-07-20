@@ -3112,7 +3112,7 @@ def main():
             display_h6.columns = ["Segment", "Corridor", "BTI %", "PTI", "CV σ/μ", "Signal Dist (m)", "Obs"]
             st.dataframe(
                 display_h6.style.format({"BTI %": "{:.1f}%", "PTI": "{:.3f}", "CV σ/μ": "{:.3f}", "Signal Dist (m)": "{:.0f}"})
-                .applymap(lambda v: "color:#991B1B;font-weight:700" if isinstance(v, float) and v >= bti_alert_threshold else "", subset=["BTI %"])
+                .map(lambda v: "color:#991B1B;font-weight:700" if isinstance(v, float) and v >= bti_alert_threshold else "", subset=["BTI %"])
                 .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}])
                 .set_properties(**{"font-size": "11px"}),
                 use_container_width=True, hide_index=True, height=450
@@ -3271,7 +3271,7 @@ def main():
                 st.markdown(f"*{n_structural} of {len(lev_df_h6)} segments show structural (invariant) variance — p > 0.05*")
                 st.dataframe(
                     lev_df_h6.style.format({"Levene W": "{:.3f}", "p-value": "{:.4f}"})
-                    .applymap(lambda v: "color:#991B1B;font-weight:700" if "Structural" in str(v) else "color:#166534",
+                    .map(lambda v: "color:#991B1B;font-weight:700" if "Structural" in str(v) else "color:#166534",
                               subset=["Stability"])
                     .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}])
                     .set_properties(**{"font-size": "11px"}),
@@ -3290,7 +3290,7 @@ def main():
                               "mean_pti": "Mean PTI", "n_alerts": "Alert Count",
                               "mean_cv": "Mean CV", "corridor_risk": "Risk Rating"})
             .style.format({"Mean BTI %": "{:.1f}%", "Worst BTI %": "{:.1f}%", "Mean PTI": "{:.3f}", "Mean CV": "{:.3f}"})
-            .applymap(lambda v: "color:#991B1B;font-weight:700" if v == "High Volatility"
+            .map(lambda v: "color:#991B1B;font-weight:700" if v == "High Volatility"
                       else ("color:#D97706;font-weight:600" if v == "Moderate" else "color:#166534"),
                       subset=["Risk Rating"])
             .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}]),
