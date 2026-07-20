@@ -6,3 +6,4 @@ seaborn
 folium  
 streamlit-folium  
 requests 
+scipy
