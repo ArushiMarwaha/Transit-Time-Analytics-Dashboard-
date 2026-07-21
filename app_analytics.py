@@ -404,7 +404,7 @@ def _left_merge_static_asset(combined_df: pd.DataFrame, static_df: Optional[pd.D
     return combined_df.merge(static_df[static_cols], on='segment_uid', how='left')
 
 
-@st.cache_data(ttl=3600, show_spinner="📡 Pulling & stitching historical telemetry tables from GitHub data_store...")
+@st.cache_data(ttl=3600, max_entries=5, show_spinner="📡 Pulling & stitching historical telemetry tables from GitHub data_store")
 def fetch_rolling_horizon_dataset(target_date: date, lookback_days: int) -> pd.DataFrame:
     """
     Rolling-horizon downloader/compiler.
