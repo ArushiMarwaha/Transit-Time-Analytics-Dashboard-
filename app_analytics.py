@@ -670,97 +670,248 @@ def resolve_directional_corridors(df, corridor_col='corridor_name'):
 # every dashboard tab without any tab needing its own knowledge of the widget.
 # =============================================================================
 
+# =============================================================================
+# CUMTA CORE TRANSIT INTELLIGENCE AGENT (FLOATING UI LAYER)
+# =============================================================================
+
 def _inject_ai_chat_css() -> None:
     """
-    Inject the floating-widget shell.
-
-    The Streamlit expander that renders the chat lives inside a normal
-    st.expander() placed at the bottom of main().  We overlay it visually
-    using CSS `position:fixed` so it appears in the lower-right corner of
-    the viewport at all times, regardless of scroll position or active tab.
-
-    Streamlit's own Emotion-based CSS class names change between releases,
-    so we target the widget by a custom data-attribute we inject via a
-    zero-height <div> anchor tag instead.
+    Injects custom CSS to convert Streamlit's default expander into a floating 
+    customer-care widget in the bottom-right viewport (Amazon / Intercom style).
     """
     st.markdown(
         """
         <style>
-        /* ── Floating anchor wrapper ─────────────────────────────────────── */
+        /* ── Floating Anchor Container ───────────────────────────────────── */
         #cumta-ai-anchor {
             position: fixed;
             bottom: 24px;
             right: 24px;
-            z-index: 99999;
+            z-index: 999999;
             width: 420px;
         }
 
-        /* ── Force the Streamlit expander that immediately follows the anchor
-              to render inside the fixed anchor box ─────────────────────── */
+        /* ── Floating Card Styling ────────────────────────────────────────── */
         #cumta-ai-anchor + div[data-testid="stExpander"] {
             position: fixed !important;
             bottom: 24px !important;
             right: 24px !important;
-            z-index: 99999 !important;
+            z-index: 999999 !important;
             width: 420px !important;
-            max-height: 82vh !important;
-            overflow-y: auto !important;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.45) !important;
-            border-radius: 14px !important;
-            border: 1px solid #2d3748 !important;
-            background: #1a1a2e !important;
+            max-height: 80vh !important;
+            overflow: hidden !important;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5) !important;
+            border-radius: 16px !important;
+            border: 1px solid #3B82F6 !important;
+            background: #0F172A !important;
+            transition: all 0.3s ease-in-out !important;
         }
 
-        /* ── Expander header (the toggle button row) ─────────────────────── */
+        /* ── Collapsible Floating Header/Button ─────────────────────────── */
         #cumta-ai-anchor + div[data-testid="stExpander"] summary {
-            background: linear-gradient(135deg, #1E3A5F 0%, #1a1a2e 100%) !important;
-            border-radius: 14px 14px 0 0 !important;
-            padding: 14px 18px !important;
+            background: linear-gradient(135deg, #1E3A8A 0%, #0F172A 100%) !important;
+            border-radius: 14px !important;
+            padding: 12px 18px !important;
             font-weight: 700 !important;
-            font-size: 14px !important;
-            color: #e2e8f0 !important;
-            letter-spacing: 0.04em !important;
-            border-bottom: 1px solid #2d3748 !important;
+            font-size: 13.5px !important;
+            color: #FFFFFF !important;
+            letter-spacing: 0.03em !important;
+            border-bottom: 1px solid #1E293B !important;
             cursor: pointer !important;
         }
 
-        /* ── Chat bubble styles ──────────────────────────────────────────── */
+        /* ── Chat Messages Container ─────────────────────────────────────── */
+        .cumta-chat-scroll-window {
+            max-height: 380px;
+            overflow-y: auto;
+            padding-right: 6px;
+            margin-bottom: 10px;
+        }
+
+        /* ── Custom Styled Bubbles ────────────────────────────────────────── */
         .cumta-bubble-user {
             background: #1E40AF;
-            color: #e2e8f0;
+            color: #F8FAFC;
             border-radius: 12px 12px 2px 12px;
             padding: 10px 14px;
-            margin: 6px 0 6px 40px;
-            font-size: 13px;
-            line-height: 1.55;
+            margin: 6px 0 6px 30px;
+            font-size: 12.5px;
+            line-height: 1.5;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
         .cumta-bubble-ai {
-            background: #2d3748;
-            color: #e2e8f0;
+            background: #1E293B;
+            color: #F8FAFC;
             border-radius: 2px 12px 12px 12px;
             padding: 10px 14px;
-            margin: 6px 40px 6px 0;
-            font-size: 13px;
-            line-height: 1.60;
+            margin: 6px 30px 6px 0;
+            font-size: 12.5px;
+            line-height: 1.55;
             border-left: 3px solid #3B82F6;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
-        .cumta-tag-analysis    { color: #60A5FA; font-weight: 700; font-size: 11px; }
-        .cumta-tag-chart       { color: #34D399; font-weight: 700; font-size: 11px; }
-        .cumta-tag-policy      { color: #FBBF24; font-weight: 700; font-size: 11px; }
-        .cumta-tag-critical    { color: #F87171; font-weight: 700; font-size: 11px; }
-        .cumta-tag-info        { color: #A78BFA; font-weight: 700; font-size: 11px; }
+
+        /* ── Tag Styling ────────────────────────────────────────────────── */
+        .cumta-tag-analysis    { color: #60A5FA; font-weight: 700; font-size: 10.5px; }
+        .cumta-tag-chart       { color: #34D399; font-weight: 700; font-size: 10.5px; }
+        .cumta-tag-policy      { color: #FBBF24; font-weight: 700; font-size: 10.5px; }
+        .cumta-tag-critical    { color: #F87171; font-weight: 700; font-size: 10.5px; }
+        .cumta-tag-info        { color: #A78BFA; font-weight: 700; font-size: 10.5px; }
         .cumta-chat-label {
-            font-size: 10.5px;
-            font-weight: 600;
+            font-size: 10px;
+            font-weight: 700;
             letter-spacing: 0.05em;
             text-transform: uppercase;
-            color: #718096;
-            margin-bottom: 2px;
+            color: #64748B;
+            margin-top: 4px;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_ai_assistant_chat(df: pd.DataFrame) -> None:
+    """
+    Renders the Floating CUMTA Core Transit Intelligence Agent in the lower-right corner.
+    """
+    _inject_ai_chat_css()
+
+    if "cumta_chat_history" not in st.session_state:
+        st.session_state.cumta_chat_history = []
+    if "cumta_chat_input_key" not in st.session_state:
+        st.session_state.cumta_chat_input_key = 0
+
+    st.markdown('<div id="cumta-ai-anchor"></div>', unsafe_allow_html=True)
+
+    with st.expander(" CUMTA Transit Intelligence Agent  |  Search & Ask", expanded=False):
+
+        # ── Scrollable Chat Feed ─────────────────────────────────────────────
+        st.markdown('<div class="cumta-chat-scroll-window">', unsafe_allow_html=True)
+        
+        if not st.session_state.cumta_chat_history:
+            st.markdown(
+                '<div class="cumta-bubble-ai">'
+                '<span class="cumta-tag-info">[AGENT READY]</span> '
+                '<b>CUMTA Core Intelligence active.</b><br>'
+                'Ask any spatial metric definition, request chart guidance, or type a command to trigger micro-analytics.<br><br>'
+                '<i>Try typing:</i> <code>What is BTI?</code>, <code>Plot TTI by hour</code>, or <code>Worst segments</code>.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            for turn in st.session_state.cumta_chat_history:
+                role = turn["role"]
+                content = turn["content"]
+                if role == "user":
+                    st.markdown(
+                        f'<div class="cumta-chat-label">Engineer / Analyst</div>'
+                        f'<div class="cumta-bubble-user">{content}</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    formatted = content.replace(
+                        "[ANALYSIS]", '<span class="cumta-tag-analysis">[ANALYSIS]</span>'
+                    ).replace(
+                        "[CHART RECOMMENDATION]", '<span class="cumta-tag-chart">[CHART RECOMMENDATION]</span>'
+                    ).replace(
+                        "[POLICY INTERVENTION]", '<span class="cumta-tag-policy">[POLICY INTERVENTION]</span>'
+                    ).replace(
+                        "[CRITICAL]", '<span class="cumta-tag-critical">[CRITICAL]</span>'
+                    ).replace(
+                        "[INFO]", '<span class="cumta-tag-info">[INFO]</span>'
+                    ).replace(
+                        "\n", "<br>"
+                    )
+                    st.markdown(
+                        f'<div class="cumta-chat-label">CUMTA Intelligence Agent</div>'
+                        f'<div class="cumta-bubble-ai">{formatted}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if turn.get("chart_cmd"):
+                        _render_micro_chart(turn["chart_cmd"], df)
+                        
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # ── Quick Action Command Ribbon ──────────────────────────────────────
+        st.caption("Quick Analytics Commands:")
+        q1, q2, q3 = st.columns(3)
+        with q1:
+            if st.button("Plot Diurnal", key="q_tti", use_container_width=True):
+                st.session_state.cumta_chat_history.append({"role": "user", "content": "Plot TTI by hour"})
+                txt, cmd = _build_ai_response("Plot TTI by hour", df)
+                st.session_state.cumta_chat_history.append({"role": "ai", "content": txt, "chart_cmd": cmd})
+                st.rerun()
+        with q2:
+            if st.button(" BTI Risk", key="q_bti", use_container_width=True):
+                st.session_state.cumta_chat_history.append({"role": "user", "content": "show BTI risk"})
+                txt, cmd = _build_ai_response("show BTI risk", df)
+                st.session_state.cumta_chat_history.append({"role": "ai", "content": txt, "chart_cmd": cmd})
+                st.rerun()
+        with q3:
+            if st.button("Top Bottlenecks", key="q_worst", use_container_width=True):
+                st.session_state.cumta_chat_history.append({"role": "user", "content": "worst segments"})
+                txt, cmd = _build_ai_response("worst segments", df)
+                st.session_state.cumta_chat_history.append({"role": "ai", "content": txt, "chart_cmd": cmd})
+                st.rerun()
+
+        st.write("")
+
+        # ── Search & Input Field ──────────────────────────────────────────────
+        input_col, send_col = st.columns([4, 1])
+        with input_col:
+            user_input = st.text_input(
+                label="Search / Ask Query",
+                placeholder="Ask about a metric, hypothesis, or chart...",
+                label_visibility="collapsed",
+                key=f"cumta_ai_input_{st.session_state.cumta_chat_input_key}",
+            )
+        with send_col:
+            send_clicked = st.button("Ask", key=f"cumta_ai_send_{st.session_state.cumta_chat_input_key}", use_container_width=True)
+
+        # ── Footer Options & Reset ──────────────────────────────────────────
+        clear_col, api_status_col = st.columns([1, 2])
+        with clear_col:
+            if st.button("Clear Chat", key="cumta_ai_clear", use_container_width=True):
+                st.session_state.cumta_chat_history = []
+                st.session_state.cumta_chat_input_key += 1
+                st.rerun()
+        with api_status_col:
+            has_key = bool(
+                (st.secrets.get("ANTHROPIC_API_KEY", "") if hasattr(st, "secrets") else "")
+                or os.environ.get("ANTHROPIC_API_KEY", "")
+            )
+            api_badge = (
+                '<span style="font-size:10px; color:#34D399; font-weight:700;">'
+                '[CLAUDE SONNET: ONLINE]</span>'
+                if has_key
+                else '<span style="font-size:10px; color:#94A3B8; font-weight:700;">'
+                '[RULE PARSER: ACTIVE]</span>'
+            )
+            st.markdown(f"<div style='text-align:right; margin-top:4px;'>{api_badge}</div>", unsafe_allow_html=True)
+
+        # ── Input Handling ───────────────────────────────────────────────────
+        if (send_clicked or (user_input and user_input.strip())) and user_input.strip():
+            clean_input = user_input.strip()
+
+            already_recorded = (
+                st.session_state.cumta_chat_history
+                and st.session_state.cumta_chat_history[-1]["role"] == "user"
+                and st.session_state.cumta_chat_history[-1]["content"] == clean_input
+            )
+
+            if not already_recorded:
+                st.session_state.cumta_chat_history.append(
+                    {"role": "user", "content": clean_input, "chart_cmd": None}
+                )
+                with st.spinner("Processing network query..."):
+                    ai_text, chart_cmd = _build_ai_response(clean_input, df)
+
+                st.session_state.cumta_chat_history.append(
+                    {"role": "ai", "content": ai_text, "chart_cmd": chart_cmd}
+                )
+                st.session_state.cumta_chat_input_key += 1
+                st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -1415,166 +1566,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
         )
 
 
-def render_ai_assistant_chat(df: pd.DataFrame) -> None:
-    """
-    Render the floating CUMTA Transit AI Advisor chat widget.
 
-    Call this function at the VERY BOTTOM of main(), after all tab blocks,
-    so the floating widget overlays every tab without interrupting any tab's
-    own layout.
-
-    The widget is implemented as a Streamlit expander that is repositioned
-    to the lower-right viewport corner via the CSS injected by
-    _inject_ai_chat_css().  Session state preserves the full conversation
-    history across tab switches and reruns.
-    """
-    # Inject the CSS overlay once per page render
-    _inject_ai_chat_css()
-
-    # Initialise session state keys
-    if "cumta_chat_history" not in st.session_state:
-        st.session_state.cumta_chat_history = []
-    if "cumta_chat_input_key" not in st.session_state:
-        st.session_state.cumta_chat_input_key = 0
-
-    # The zero-height anchor <div> is placed immediately before the expander
-    # so the CSS sibling selector (#cumta-ai-anchor + div[data-testid="stExpander"])
-    # can grab and reposition it.
-    st.markdown('<div id="cumta-ai-anchor"></div>', unsafe_allow_html=True)
-
-    with st.expander("CUMTA Transit AI Advisor  |  Ask a question about any corridor, metric, or chart", expanded=False):
-
-        # ── Conversation history ──────────────────────────────────────────────
-        chat_container = st.container()
-        with chat_container:
-            if not st.session_state.cumta_chat_history:
-                # Welcome message on first load
-                st.markdown(
-                    '<div class="cumta-bubble-ai">'
-                    '<span class="cumta-tag-info">[INFO]</span> '
-                    'CUMTA Transit AI Advisor is active. I know all 10 diagnostic hypotheses, '
-                    'every metric definition (TTI, BTI, PTI, MCBI, Lambda, AQI residuals), '
-                    'and can generate inline micro-charts from your live dataset.<br><br>'
-                    'Type a question — for example: '
-                    '"What is BTI?", "Explain Hypothesis 3", "Plot TTI by hour", '
-                    '"Show worst segments", or "Which corridor needs reversible lanes?"'
-                    '</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                for turn in st.session_state.cumta_chat_history:
-                    role = turn["role"]
-                    content = turn["content"]
-                    if role == "user":
-                        st.markdown(
-                            f'<div class="cumta-chat-label">You</div>'
-                            f'<div class="cumta-bubble-user">{content}</div>',
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        # AI response — format tags as styled spans
-                        formatted = content.replace(
-                            "[ANALYSIS]", '<span class="cumta-tag-analysis">[ANALYSIS]</span>'
-                        ).replace(
-                            "[CHART RECOMMENDATION]", '<span class="cumta-tag-chart">[CHART RECOMMENDATION]</span>'
-                        ).replace(
-                            "[POLICY INTERVENTION]", '<span class="cumta-tag-policy">[POLICY INTERVENTION]</span>'
-                        ).replace(
-                            "[CRITICAL]", '<span class="cumta-tag-critical">[CRITICAL]</span>'
-                        ).replace(
-                            "[INFO]", '<span class="cumta-tag-info">[INFO]</span>'
-                        ).replace(
-                            "[VERDICT]", '<span class="cumta-tag-analysis">[VERDICT]</span>'
-                        ).replace(
-                            "[METHODOLOGY]", '<span class="cumta-tag-chart">[METHODOLOGY]</span>'
-                        ).replace(
-                            "[CHART]", '<span class="cumta-tag-chart">[CHART]</span>'
-                        ).replace(
-                            "\n", "<br>"
-                        )
-                        st.markdown(
-                            f'<div class="cumta-chat-label">CUMTA AI Advisor</div>'
-                            f'<div class="cumta-bubble-ai">{formatted}</div>',
-                            unsafe_allow_html=True,
-                        )
-                        # Render any micro-chart that was generated for this turn
-                        if turn.get("chart_cmd"):
-                            _render_micro_chart(turn["chart_cmd"], df)
-
-        st.write("")
-
-        # ── Input row ─────────────────────────────────────────────────────────
-        input_col, send_col = st.columns([5, 1])
-        with input_col:
-            user_input = st.text_input(
-                label="Query",
-                placeholder="Ask about a metric, hypothesis, or type a chart command...",
-                label_visibility="collapsed",
-                key=f"cumta_ai_input_{st.session_state.cumta_chat_input_key}",
-            )
-        with send_col:
-            send_clicked = st.button("Send", key=f"cumta_ai_send_{st.session_state.cumta_chat_input_key}", use_container_width=True)
-
-        # ── Clear conversation ────────────────────────────────────────────────
-        clear_col, _, api_status_col = st.columns([1, 2, 2])
-        with clear_col:
-            if st.button("Clear", key="cumta_ai_clear", use_container_width=True):
-                st.session_state.cumta_chat_history = []
-                st.session_state.cumta_chat_input_key += 1
-                st.rerun()
-        with api_status_col:
-            has_key = bool(
-                (st.secrets.get("ANTHROPIC_API_KEY", "") if hasattr(st, "secrets") else "")
-                or os.environ.get("ANTHROPIC_API_KEY", "")
-            )
-            api_badge = (
-                '<span style="font-size:11px;color:#34D399;font-weight:600;">'
-                "[Claude API: ACTIVE]</span>"
-                if has_key
-                else '<span style="font-size:11px;color:#94A3B8;">'
-                "[Rule-based parser mode]</span>"
-            )
-            st.markdown(api_badge, unsafe_allow_html=True)
-
-        # ── Process submission ────────────────────────────────────────────────
-        if (send_clicked or (user_input and user_input.strip())) and user_input.strip():
-            clean_input = user_input.strip()
-
-            # Guard: prevent duplicate submission on rerun
-            already_recorded = (
-                st.session_state.cumta_chat_history
-                and st.session_state.cumta_chat_history[-1]["role"] == "user"
-                and st.session_state.cumta_chat_history[-1]["content"] == clean_input
-            )
-
-            if not already_recorded:
-                # Append user turn
-                st.session_state.cumta_chat_history.append(
-                    {"role": "user", "content": clean_input, "chart_cmd": None}
-                )
-
-                # Generate AI response
-                with st.spinner("Analysing query..."):
-                    ai_text, chart_cmd = _build_ai_response(clean_input, df)
-
-                # Append AI turn
-                st.session_state.cumta_chat_history.append(
-                    {"role": "ai", "content": ai_text, "chart_cmd": chart_cmd}
-                )
-
-                # Bump input key to clear the text_input widget
-                st.session_state.cumta_chat_input_key += 1
-                st.rerun()
-
-        # ── Suggested quick commands ──────────────────────────────────────────
-        if not st.session_state.cumta_chat_history:
-            st.markdown(
-                '<div style="font-size:11px;color:#718096;margin-top:6px;">'
-                "Quick commands: Plot TTI by hour | Show BTI risk | Worst segments | "
-                "Corridor comparison | AQI | Explain Hypothesis 9 | What is MCBI?"
-                "</div>",
-                unsafe_allow_html=True,
-            )
 
 
 # =============================================================================
