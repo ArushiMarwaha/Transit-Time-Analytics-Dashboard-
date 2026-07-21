@@ -663,6 +663,921 @@ def resolve_directional_corridors(df, corridor_col='corridor_name'):
 
  
 # =============================================================================
+# AI ASSISTANT  —  CUMTA Transit AI Advisor
+# =============================================================================
+# Self-contained floating chat widget.  Call render_ai_assistant_chat(df)
+# at the very bottom of main() (after every tab block) so the panel overlays
+# every dashboard tab without any tab needing its own knowledge of the widget.
+# =============================================================================
+
+def _inject_ai_chat_css() -> None:
+    """
+    Inject the floating-widget shell.
+
+    The Streamlit expander that renders the chat lives inside a normal
+    st.expander() placed at the bottom of main().  We overlay it visually
+    using CSS `position:fixed` so it appears in the lower-right corner of
+    the viewport at all times, regardless of scroll position or active tab.
+
+    Streamlit's own Emotion-based CSS class names change between releases,
+    so we target the widget by a custom data-attribute we inject via a
+    zero-height <div> anchor tag instead.
+    """
+    st.markdown(
+        """
+        <style>
+        /* ── Floating anchor wrapper ─────────────────────────────────────── */
+        #cumta-ai-anchor {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 99999;
+            width: 420px;
+        }
+
+        /* ── Force the Streamlit expander that immediately follows the anchor
+              to render inside the fixed anchor box ─────────────────────── */
+        #cumta-ai-anchor + div[data-testid="stExpander"] {
+            position: fixed !important;
+            bottom: 24px !important;
+            right: 24px !important;
+            z-index: 99999 !important;
+            width: 420px !important;
+            max-height: 82vh !important;
+            overflow-y: auto !important;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.45) !important;
+            border-radius: 14px !important;
+            border: 1px solid #2d3748 !important;
+            background: #1a1a2e !important;
+        }
+
+        /* ── Expander header (the toggle button row) ─────────────────────── */
+        #cumta-ai-anchor + div[data-testid="stExpander"] summary {
+            background: linear-gradient(135deg, #1E3A5F 0%, #1a1a2e 100%) !important;
+            border-radius: 14px 14px 0 0 !important;
+            padding: 14px 18px !important;
+            font-weight: 700 !important;
+            font-size: 14px !important;
+            color: #e2e8f0 !important;
+            letter-spacing: 0.04em !important;
+            border-bottom: 1px solid #2d3748 !important;
+            cursor: pointer !important;
+        }
+
+        /* ── Chat bubble styles ──────────────────────────────────────────── */
+        .cumta-bubble-user {
+            background: #1E40AF;
+            color: #e2e8f0;
+            border-radius: 12px 12px 2px 12px;
+            padding: 10px 14px;
+            margin: 6px 0 6px 40px;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+        .cumta-bubble-ai {
+            background: #2d3748;
+            color: #e2e8f0;
+            border-radius: 2px 12px 12px 12px;
+            padding: 10px 14px;
+            margin: 6px 40px 6px 0;
+            font-size: 13px;
+            line-height: 1.60;
+            border-left: 3px solid #3B82F6;
+        }
+        .cumta-tag-analysis    { color: #60A5FA; font-weight: 700; font-size: 11px; }
+        .cumta-tag-chart       { color: #34D399; font-weight: 700; font-size: 11px; }
+        .cumta-tag-policy      { color: #FBBF24; font-weight: 700; font-size: 11px; }
+        .cumta-tag-critical    { color: #F87171; font-weight: 700; font-size: 11px; }
+        .cumta-tag-info        { color: #A78BFA; font-weight: 700; font-size: 11px; }
+        .cumta-chat-label {
+            font-size: 10.5px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: #718096;
+            margin-bottom: 2px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Domain knowledge base — every metric, tab, and hypothesis the AI knows
+# ---------------------------------------------------------------------------
+_DOMAIN_KB: dict = {
+    # ── Metric definitions ──────────────────────────────────────────────────
+    "metrics": {
+        "TTI": (
+            "Travel Time Index — the ratio of current travel time to free-flow travel time. "
+            "TTI = 1.0 means free-flow. TTI = 2.0 means the trip takes twice as long as it would "
+            "at zero congestion. The dashboard flags TTI >= 2.2 as peak congestion and TTI >= 1.5 "
+            "as persistent off-peak congestion (used in Hypothesis 3 Quadrant classification)."
+        ),
+        "BTI": (
+            "Buffer Time Index — the extra percentage of time a commuter must add above the "
+            "mean travel time to guarantee on-time arrival 95 % of the time. "
+            "Formula: BTI = (P95(TT) - mean(TT)) / mean(TT) * 100. "
+            "BTI > 80 % is flagged as an acute reliability crisis in Hypothesis 6. "
+            "Tab: 'Hypothesis 6: Commuter Uncertainty'."
+        ),
+        "PTI": (
+            "Planning Time Index — the 95th-percentile travel time divided by free-flow time. "
+            "PTI = 2.5 means a traveller must plan for a trip 2.5x longer than free-flow to be "
+            "confident of on-time arrival. Closely related to BTI but expressed as an absolute "
+            "multiplier rather than a percentage premium. Tab: 'Hypothesis 6: Commuter Uncertainty'."
+        ),
+        "MCBI": (
+            "Multi-Criteria Bottleneck Index — a composite priority score (0-1) combining four "
+            "sub-signals: tail severity (P90 TTI, weight 0.25), congestion frequency (0.20), "
+            "early onset hour (0.25), and verified root-cause event count (0.30). Higher MCBI = "
+            "higher engineering triage priority. Tab: 'Hypothesis 1: Systemic Bottleneck Localization'."
+        ),
+        "Lambda": (
+            "Directional Asymmetry Ratio (Lambda, Λ) — the ratio of median TTI in Direction A "
+            "to median TTI in Direction B at a given hour. Λ ≈ 1.0 means balanced bidirectional "
+            "flow. A tidal corridor shows Λ >= 1.8 during morning peak and Λ <= 0.55 during "
+            "evening peak (an inversion loop). Tab: 'Hypothesis 5: Tidal Flow Asymmetry'."
+        ),
+        "AQI": (
+            "Air Quality Index — the Google Environment API localized AQI value per segment. "
+            "Used as a supplementary congestion characterisation signal in Hypothesis 10. "
+            "High TTI + elevated AQI = high-volume traffic accumulation (vehicle idling). "
+            "High TTI + flat AQI = low-volume incident blockage (accident / stall). "
+            "Tab: 'Hypothesis 10: Traffic Volume via AQI Proxy'."
+        ),
+        "delta_lanes": (
+            "Downstream Lane Drop Delta (DeltaLanes) — the reduction in lane count between "
+            "segment s and its downstream successor. Positive values flag geometric bottlenecks. "
+            "Used in Hypothesis 3 Quadrant I classification and OLS attribution. "
+            "Tab: 'Hypothesis 3: Geometric Constraints'."
+        ),
+        "signal_density": (
+            "Signal Node Density — a proxy computed as 1000 / nearest_signal_dist_meters. "
+            "Higher values indicate denser signal clustering within 1,000 m, which creates "
+            "cumulative intersection queues. Used in Hypothesis 3 and Hypothesis 9 clustering. "
+            "Tab: 'Hypothesis 3: Geometric Constraints'."
+        ),
+    },
+    # ── Hypothesis summaries ────────────────────────────────────────────────
+    "hypotheses": {
+        1: {
+            "name": "Systemic Bottleneck Localization",
+            "tab": "Hypothesis 1: Systemic Bottleneck Localization",
+            "one_liner": "Identifies true root-cause congestion nodes vs. spillover/victim segments using MCBI scoring.",
+            "method": (
+                "Each segment's TTI is compared to its own P90 threshold. A segment earns "
+                "'Confirmed root cause' only if it is congested while its upstream neighbor is clear, "
+                "the congestion persists to the next interval, and this pattern repeats >= 2 times. "
+                "Spillover/victim segments are congested simultaneously with their upstream neighbor. "
+                "MCBI composite score weights P90 severity, frequency, onset hour, and root-cause events."
+            ),
+            "charts": ["MCBI Leaderboard bar chart", "Folium map with segment status markers", "Spillover vs Root-Cause pie"],
+            "action": "Send engineering crews to Confirmed root-cause segments first. Do not redesign victim segments.",
+        },
+        2: {
+            "name": "Temporal Peak Profiling",
+            "tab": "Hypothesis 2: Temporal Peak Profiling",
+            "one_liner": "Builds diurnal TTI profiles to isolate peak windows and quantify demand-side congestion intensity.",
+            "method": "Groups TTI by hour and day-type (weekday vs weekend). Wilcoxon tests confirm whether peak-hour TTI is significantly higher than off-peak.",
+            "charts": ["Hourly TTI box plots", "Weekday vs weekend profile overlay", "Peak corridor heatmap"],
+            "action": "Target signal retiming and demand management at the specific peak hour windows confirmed by Wilcoxon p < 0.05.",
+        },
+        3: {
+            "name": "Geometric Constraints & Structural Choke Points",
+            "tab": "Hypothesis 3: Geometric Constraints",
+            "one_liner": "Separates persistent structural deficits (Q-I) from temporal demand spikes (Q-II) using a 2D behavioral dispersion matrix.",
+            "method": (
+                "Off-peak TTI (23:00-05:00) vs peak TTI (08-10, 17-20) places each segment into one of three quadrants. "
+                "Q-I: off-peak >= 1.5 AND peak >= 2.2 = fails under zero demand = geometry is the constraint. "
+                "Q-II: off-peak < 1.5, peak >= 2.2 = only breaks at rush hour = demand management can fix it. "
+                "Q-III: peak TTI < 2.2 = nominal. OLS + Random Forest identify which features drive Q-I delay."
+            ),
+            "charts": ["2D Structural Dispersion scatter", "PDP signal proximity curve", "Lane-drop delta bar", "Mann-Whitney test table"],
+            "action": "Q-I segments need capital civil intervention. Q-II segments need signal retiming or bus bay relocation.",
+        },
+        4: {
+            "name": "Weather-Driven Variance",
+            "tab": "Hypothesis 4: Weather-Driven Variance",
+            "one_liner": "Quantifies how precipitation and wind modulate TTI, separating weather-sensitive links from structurally fragile ones.",
+            "method": "OLS regression of TTI on precipitation_intensity and wind_speed_10m. Rain elasticity slope (beta_rain) saved per segment as weather vulnerability score.",
+            "charts": ["Precipitation vs TTI scatter + regression line", "Wind speed breakpoint chart", "Weather sensitivity ranking"],
+            "action": "High beta_rain segments need drainage infrastructure investment before monsoon season.",
+        },
+        5: {
+            "name": "Tidal Flow Asymmetry",
+            "tab": "Hypothesis 5: Tidal Flow Asymmetry",
+            "one_liner": "Detects morning-inbound / evening-outbound directional imbalances that justify reversible lane investment.",
+            "method": (
+                "Shapiro-Wilk test on D_t = X_t - Y_t (AM TTI minus PM TTI). If non-normal (p < 0.05), "
+                "Wilcoxon Signed-Rank Test determines whether directional median TTI differs significantly (p < 0.01). "
+                "Tidal Split Coefficient Lambda = Median(TTI_directionA_h) / Median(TTI_directionB_h). "
+                "Inversion Loop: Lambda >= 1.8 AM and <= 0.55 PM confirms reversible lane candidacy. "
+                "KS Test across weekly blocks confirms structural stability."
+            ),
+            "charts": ["Lambda hourly profile per corridor", "Direction A vs Direction B heatmaps", "Tidal ratio registry table"],
+            "action": "Inversion Loop + no fixed barrier = reversible lane with automated bollards. Fixed barrier = asymmetric signal phasing.",
+        },
+        6: {
+            "name": "Commuter Uncertainty & Travel Time Predictability",
+            "tab": "Hypothesis 6: Commuter Uncertainty",
+            "one_liner": "Computes BTI and PTI to identify which segments impose the worst planning burden on commuters.",
+            "method": (
+                "IQR outlier cleansing removes incident spikes above P75 + 1.5*IQR. "
+                "BTI = (P95 - mean) / mean * 100. PTI = P95 / free_flow. "
+                "Heteroscedastic OLS: ln(sigma^2) ~ ln(TTI) + signal_dist. Beta1 > 0 = non-linear uncertainty. "
+                "Levene's Test across three weekly blocks confirms whether variance is structural (p > 0.05)."
+            ),
+            "charts": ["BTI ranking horizontal bar", "Heteroscedastic OLS scatter", "PDP signal proximity vs BTI", "Levene test table"],
+            "action": "BTI >= 80%: deploy incident response staging. Structural Levene: capital widening. Transient Levene: dynamic monitoring.",
+        },
+        7: {
+            "name": "Flyover Exit Gradients",
+            "tab": "Hypothesis 7: The Flyover Exit & Gradients",
+            "one_liner": "Tests whether elevated flyover ramp exits generate systematic post-descent speed decay.",
+            "method": "Compares TTI distributions between network_layer_type = 'Flyover' segments and At-Grade segments using Mann-Whitney U test.",
+            "charts": ["Flyover vs At-Grade TTI distribution", "Ramp exit proximity curve"],
+            "action": "Significant post-flyover speed decay: install merge advisory signage and consider ramp metering.",
+        },
+        8: {
+            "name": "Spatial Length Dilution Bias",
+            "tab": "Hypothesis 8: Spatial Length Dilution Bias",
+            "one_liner": "Detects whether longer GIS segments artificially average out peak congestion, masking micro-bottlenecks.",
+            "method": "Correlation between segment_length_meters and coefficient of variation of TTI. Long segments with low CV = dilution bias.",
+            "charts": ["Segment length vs CV scatter", "Length-stratified TTI distribution"],
+            "action": "Segment GIS links > 800 m in high-CV corridors into finer-grained micro-segments for accurate diagnostics.",
+        },
+        9: {
+            "name": "Unsupervised Taxonomy Clustering",
+            "tab": "Hypothesis 9: Unsupervised Taxonomy Clustering",
+            "one_liner": "Groups all segments into four behavioral archetypes using PCA + K-Means + GMM for standardized capital policy templates.",
+            "method": (
+                "Multi-feature matrix (mean peak TTI, off-peak TTI, P95 TTI, BTI, CV, Net Asymmetry Index, "
+                "rain elasticity, signal density, lane drop delta) Z-score normalized. Pearson collinearity pruning (rho >= 0.85). "
+                "PCA retains >= 85% variance. K-Means++ + Agglomerative Hierarchical clustering. "
+                "GMM soft clustering flags boundary segments. Silhouette Coefficient + Davies-Bouldin Index. "
+                "Bootstrap ARI >= 0.82 confirms stability. SHAP values explain individual assignments."
+            ),
+            "charts": ["PCA 2D projection scatter", "Silhouette coefficient bar", "Bootstrap ARI distribution", "SHAP beeswarm"],
+            "action": (
+                "Cluster A (Chronic Structural) = capital civil reconstruction. "
+                "Cluster B (Peak Operational) = adaptive signal timing. "
+                "Cluster C (Climate-Vulnerable) = stormwater drainage. "
+                "Cluster D (Tidal Commuter) = reversible lanes."
+            ),
+        },
+        10: {
+            "name": "Traffic Volume via AQI Proxy",
+            "tab": "Hypothesis 10: Traffic Volume via AQI Proxy",
+            "one_liner": "Uses localized AQI as a supplementary congestion disambiguation signal, controlling for wind and precipitation.",
+            "method": (
+                "Cross-Correlation Function (CCF) at lags k = {0,1,2,3} hours identifies the optimal "
+                "temporal lag between TTI and AQI. OLS: AQI(t+k) ~ TTI + wind_speed + precipitation + hour. "
+                "Beta1 significant (p < 0.01) = traffic is a verified AQI driver after atmospheric controls. "
+                "SHAP values isolate traffic contribution vs. weather contribution. "
+                "Temporal holdout MAPE < 8% validates model for production use."
+            ),
+            "charts": ["TTI vs AQI scatter with non-linear polynomial fit", "SHAP bar chart", "Model validation observed vs forecast"],
+            "action": (
+                "High TTI + high AQI = transit capacity management. "
+                "High TTI + flat AQI = incident response team dispatch. "
+                "Low TTI + high AQI = industrial emissions audit."
+            ),
+        },
+    },
+    # ── Quick command dispatch ──────────────────────────────────────────────
+    "quick_commands": {
+        "plot tti": "plot_tti_by_hour",
+        "show tti": "plot_tti_by_hour",
+        "tti by hour": "plot_tti_by_hour",
+        "diurnal": "plot_tti_by_hour",
+        "bti risk": "plot_bti_risk",
+        "buffer time": "plot_bti_risk",
+        "worst segments": "plot_worst_segments",
+        "top 10": "plot_worst_segments",
+        "top 5": "plot_worst_segments",
+        "corridor comparison": "plot_corridor_compare",
+        "compare corridors": "plot_corridor_compare",
+        "aqi": "plot_aqi_tti",
+        "air quality": "plot_aqi_tti",
+        "pollution": "plot_aqi_tti",
+    },
+}
+
+
+def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None]:
+    """
+    Stateless domain-knowledge responder.
+
+    Returns (text_response, chart_command | None).
+    chart_command is a string key from _DOMAIN_KB['quick_commands'] if the
+    question requests a micro-visualisation, otherwise None.
+
+    Priority order:
+      1. Anthropic Claude API (if ANTHROPIC_API_KEY is set in Streamlit secrets
+         or environment variables).
+      2. Rule-based structured parser (always available, zero dependencies).
+    """
+    # ── Try Anthropic API first ─────────────────────────────────────────────
+    api_key = (
+        st.secrets.get("ANTHROPIC_API_KEY", None)
+        if hasattr(st, "secrets")
+        else os.environ.get("ANTHROPIC_API_KEY", None)
+    )
+    if api_key:
+        try:
+            import anthropic as _anthropic
+
+            _system_prompt = (
+                "You are the CUMTA Transit AI Advisor — a Senior Spatial Analytics Consultant "
+                "embedded in the CUMTA Core Transit Network Diagnostics Cockpit dashboard.\n\n"
+                "STRICT FORMAT RULES:\n"
+                "- Never use emoji anywhere in your response.\n"
+                "- Use professional engineering tags: [ANALYSIS], [CHART RECOMMENDATION], "
+                "[POLICY INTERVENTION], [CRITICAL], [INFO], [VERDICT], [METHODOLOGY].\n"
+                "- When recommending a chart, tell the user exactly which tab to navigate to "
+                "and which chart panel to look at.\n"
+                "- Keep responses under 280 words unless the user explicitly asks for a full report.\n\n"
+                "METRIC DEFINITIONS YOU KNOW:\n"
+                + "\n".join(
+                    f"- {k}: {v[:120]}" for k, v in _DOMAIN_KB["metrics"].items()
+                )
+                + "\n\nHYPOTHESES YOU KNOW:\n"
+                + "\n".join(
+                    f"- H{n} ({v['name']}): {v['one_liner']}"
+                    for n, v in _DOMAIN_KB["hypotheses"].items()
+                )
+            )
+
+            client = _anthropic.Anthropic(api_key=api_key)
+            message = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=512,
+                system=_system_prompt,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            response_text = message.content[0].text.strip()
+
+            # Detect chart intent in the API response
+            chart_cmd = None
+            for trigger, cmd in _DOMAIN_KB["quick_commands"].items():
+                if trigger in user_msg.lower():
+                    chart_cmd = cmd
+                    break
+
+            return response_text, chart_cmd
+
+        except Exception:
+            pass  # Fall through to rule-based parser
+
+    # ── Rule-based parser fallback ──────────────────────────────────────────
+    msg_lower = user_msg.lower().strip()
+
+    # 1. Chart / plot request detection
+    chart_cmd = None
+    for trigger, cmd in _DOMAIN_KB["quick_commands"].items():
+        if trigger in msg_lower:
+            chart_cmd = cmd
+            break
+
+    # 2. Metric definition lookups
+    for metric_key, definition in _DOMAIN_KB["metrics"].items():
+        if metric_key.lower() in msg_lower or metric_key.lower().replace("_", " ") in msg_lower:
+            return (
+                f"[ANALYSIS] {metric_key} Definition\n\n{definition}",
+                chart_cmd,
+            )
+
+    # 3. Hypothesis routing
+    for hyp_num, hyp in _DOMAIN_KB["hypotheses"].items():
+        if (
+            f"hypothesis {hyp_num}" in msg_lower
+            or f"h{hyp_num}" in msg_lower
+            or hyp["name"].lower()[:12] in msg_lower
+        ):
+            chart_list = " | ".join(hyp["charts"])
+            return (
+                f"[ANALYSIS] Hypothesis {hyp_num}: {hyp['name']}\n\n"
+                f"{hyp['method']}\n\n"
+                f"[CHART RECOMMENDATION] Navigate to tab: '{hyp['tab']}' — "
+                f"key charts: {chart_list}.\n\n"
+                f"[POLICY INTERVENTION] {hyp['action']}",
+                chart_cmd,
+            )
+
+    # 4. Worst segment / bottleneck question
+    if any(t in msg_lower for t in ["worst", "bottleneck", "critical", "top", "highest tti", "most congested"]):
+        if "shapefile_segment_name" in df.columns and "travel_time_index_tti" in df.columns:
+            seg_means = (
+                df.groupby("shapefile_segment_name")["travel_time_index_tti"]
+                .mean()
+                .sort_values(ascending=False)
+            )
+            top3 = seg_means.head(3)
+            rows = "\n".join(
+                f"  {i+1}. {seg} — Mean TTI: {val:.3f}"
+                for i, (seg, val) in enumerate(top3.items())
+            )
+            return (
+                f"[ANALYSIS] Top 3 Worst-Performing Segments (by Mean TTI) in current data window:\n\n"
+                f"{rows}\n\n"
+                f"[CHART RECOMMENDATION] Navigate to 'Hypothesis 1: Systemic Bottleneck Localization' "
+                f"and review the MCBI Leaderboard for full ranked diagnostics.\n\n"
+                f"[POLICY INTERVENTION] Run a field audit at the top-ranked segment first. "
+                f"Confirm root-cause status before committing capital expenditure.",
+                "plot_worst_segments",
+            )
+        else:
+            return (
+                "[INFO] The current data window does not contain segment TTI fields. "
+                "Please broaden the aggregation horizon in the sidebar to 7-Day or 15-Day "
+                "and refresh. Then navigate to Hypothesis 1 for the full bottleneck leaderboard.",
+                None,
+            )
+
+    # 5. AQI / pollution question
+    if any(t in msg_lower for t in ["aqi", "air quality", "pollution", "emission"]):
+        h10 = _DOMAIN_KB["hypotheses"][10]
+        return (
+            f"[ANALYSIS] {h10['one_liner']}\n\n"
+            f"{h10['method']}\n\n"
+            f"[CHART RECOMMENDATION] Navigate to '{h10['tab']}' — "
+            f"review the non-linear TTI vs AQI polynomial scatter and the SHAP attribution bar chart.\n\n"
+            f"[POLICY INTERVENTION] {h10['action']}",
+            "plot_aqi_tti",
+        )
+
+    # 6. Cluster / taxonomy question
+    if any(t in msg_lower for t in ["cluster", "taxonomy", "archetype", "pca", "gmm", "segment type"]):
+        h9 = _DOMAIN_KB["hypotheses"][9]
+        return (
+            f"[ANALYSIS] {h9['one_liner']}\n\n"
+            f"{h9['method']}\n\n"
+            f"[CHART RECOMMENDATION] Navigate to '{h9['tab']}' — "
+            f"review the PCA 2D projection and Silhouette coefficient charts.\n\n"
+            f"[POLICY INTERVENTION] {h9['action']}",
+            None,
+        )
+
+    # 7. Tidal / reversible lane question
+    if any(t in msg_lower for t in ["tidal", "reversible", "directional", "asymmetr", "lambda", "inversion"]):
+        h5 = _DOMAIN_KB["hypotheses"][5]
+        return (
+            f"[ANALYSIS] {h5['one_liner']}\n\n"
+            f"{h5['method']}\n\n"
+            f"[CHART RECOMMENDATION] Navigate to '{h5['tab']}' — "
+            f"review the Lambda hourly profile and directional heatmaps.\n\n"
+            f"[POLICY INTERVENTION] {h5['action']}",
+            "plot_tti_by_hour",
+        )
+
+    # 8. Reliability / BTI / PTI question
+    if any(t in msg_lower for t in ["bti", "pti", "reliability", "unpredictable", "planning time", "buffer time"]):
+        h6 = _DOMAIN_KB["hypotheses"][6]
+        return (
+            f"[ANALYSIS] {h6['one_liner']}\n\n"
+            f"[METHODOLOGY] {h6['method']}\n\n"
+            f"[CHART RECOMMENDATION] Navigate to '{h6['tab']}' — "
+            f"review the BTI ranking bar chart and the Levene test table.\n\n"
+            f"[POLICY INTERVENTION] {h6['action']}",
+            "plot_bti_risk",
+        )
+
+    # 9. Generic help / capability question
+    if any(t in msg_lower for t in ["what can you", "help", "how do i", "explain", "what is this", "overview"]):
+        hyp_list = "\n".join(
+            f"  H{n}: {v['name']} — {v['one_liner']}"
+            for n, v in _DOMAIN_KB["hypotheses"].items()
+        )
+        metric_list = ", ".join(_DOMAIN_KB["metrics"].keys())
+        return (
+            f"[INFO] CUMTA Transit AI Advisor — Capability Overview\n\n"
+            f"I am embedded in the CUMTA Core Transit Network Diagnostics Cockpit and "
+            f"can answer questions about all 10 analytical hypotheses, interpret chart outputs, "
+            f"generate micro-visualisations from live data, and provide engineering policy recommendations.\n\n"
+            f"HYPOTHESES I KNOW:\n{hyp_list}\n\n"
+            f"METRICS I CAN EXPLAIN: {metric_list}\n\n"
+            f"QUICK MICRO-CHARTS: type 'plot TTI by hour', 'show BTI risk', 'worst segments', "
+            f"'corridor comparison', or 'AQI' to generate an inline chart from your current dataset.",
+            None,
+        )
+
+    # 10. Default structured fallback
+    return (
+        f"[INFO] Query received: '{user_msg[:80]}'\n\n"
+        "[ANALYSIS] I could not match your query to a specific hypothesis, metric, or chart command. "
+        "Try asking about a specific metric (TTI, BTI, PTI, MCBI, Lambda, AQI), a hypothesis number "
+        "(e.g. 'explain Hypothesis 6'), or type a quick-chart command such as "
+        "'plot TTI by hour' or 'show BTI risk'.\n\n"
+        "[INFO] If you have set an ANTHROPIC_API_KEY in Streamlit Secrets, free-form natural language "
+        "queries will be answered by the Claude AI model instead of this structured parser.",
+        None,
+    )
+
+
+def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
+    """
+    Generate and display a clean micro-chart inside the chat window.
+
+    All charts use a white canvas with dark (#0F172A) text and high-contrast
+    palette colors so they are readable in both light and dark Streamlit themes.
+    """
+    if chart_cmd == "plot_tti_by_hour":
+        if "travel_time_index_tti" not in df.columns or "derived_hour" not in df.columns:
+            st.caption("[INFO] TTI or hour data not available in current window.")
+            return
+        hourly = (
+            df.groupby("derived_hour")["travel_time_index_tti"]
+            .mean()
+            .reset_index()
+            .rename(columns={"derived_hour": "Hour (IST)", "travel_time_index_tti": "Mean TTI"})
+        )
+        fig, ax = plt.subplots(figsize=(5.5, 3.0), facecolor="white")
+        ax.set_facecolor("white")
+        bar_colors = [
+            "#991B1B" if (7 <= h <= 10 or 17 <= h <= 20)
+            else ("#166534" if (h <= 5 or h == 23)
+                  else "#1E40AF")
+            for h in hourly["Hour (IST)"]
+        ]
+        ax.bar(hourly["Hour (IST)"], hourly["Mean TTI"], color=bar_colors, edgecolor="none", width=0.8)
+        ax.axhline(1.0, color="#64748B", linewidth=1.0, linestyle="--", alpha=0.7)
+        ax.axhline(2.2, color="#991B1B", linewidth=0.9, linestyle=":", alpha=0.7)
+        ax.text(0.5, 2.23, "Peak congestion threshold (2.2)", fontsize=6.5, color="#991B1B", transform=ax.get_yaxis_transform())
+        ax.set_xlabel("Hour of Day (IST, 0-23)", fontsize=8.5, fontweight="bold", color="#0F172A")
+        ax.set_ylabel("Mean Travel Time Index (TTI)", fontsize=8.5, fontweight="bold", color="#0F172A")
+        ax.set_title(
+            "Network Diurnal TTI Profile — All Corridors",
+            fontsize=9.5, fontweight="bold", color="#0F172A", pad=8
+        )
+        ax.set_xticks(range(0, 24, 2))
+        ax.set_xticklabels([str(h) for h in range(0, 24, 2)], fontsize=7.5, color="#0F172A")
+        ax.tick_params(colors="#0F172A", labelcolor="#0F172A")
+        for sp in ["top", "right"]:
+            ax.spines[sp].set_visible(False)
+        ax.spines["left"].set_color("#CBD5E1")
+        ax.spines["bottom"].set_color("#CBD5E1")
+        from matplotlib.patches import Patch
+        legend_handles = [
+            Patch(facecolor="#991B1B", label="Peak Hour (07-10 / 17-20)"),
+            Patch(facecolor="#166534", label="Off-Peak (23:00-05:00)"),
+            Patch(facecolor="#1E40AF", label="Mid-Day Transition"),
+        ]
+        ax.legend(handles=legend_handles, fontsize=6.5, loc="upper left",
+                  facecolor="white", edgecolor="#CBD5E1")
+        plt.tight_layout()
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+        st.caption(
+            "[CHART] Mean TTI per hour across all ingested corridors. "
+            "Red bars = peak windows. Green bars = off-peak baseline. "
+            "Bars above the 2.2 dotted line exceed the structural congestion threshold. "
+            "Navigate to 'Hypothesis 2: Temporal Peak Profiling' for full statistical breakdown."
+        )
+
+    elif chart_cmd == "plot_bti_risk":
+        if "travel_time_index_tti" not in df.columns or "shapefile_segment_name" not in df.columns:
+            st.caption("[INFO] Segment TTI data not available for BTI computation.")
+            return
+        ff_col = df.get("free_flow_travel_time_seconds", pd.Series(300.0, index=df.index))
+        ct_col = df.get(
+            "current_travel_time_seconds",
+            df["travel_time_index_tti"] * 300.0
+        )
+
+        def _bti(grp):
+            tt = (grp["current_travel_time_seconds"]
+                  if "current_travel_time_seconds" in grp
+                  else grp["travel_time_index_tti"] * 300).dropna()
+            if len(tt) < 3:
+                return np.nan
+            mu = tt.mean()
+            p95 = np.percentile(tt, 95)
+            return (p95 - mu) / mu * 100 if mu > 0 else np.nan
+
+        seg_bti = df.groupby("shapefile_segment_name").apply(_bti).dropna().sort_values(ascending=False).head(15)
+        if seg_bti.empty:
+            st.caption("[INFO] Insufficient records per segment for BTI computation.")
+            return
+
+        fig, ax = plt.subplots(figsize=(5.5, max(3.0, 0.28 * len(seg_bti))), facecolor="white")
+        ax.set_facecolor("white")
+        bar_colors_bti = ["#991B1B" if v >= 80 else "#D97706" if v >= 40 else "#166534" for v in seg_bti.values]
+        ax.barh([s[:20] for s in seg_bti.index], seg_bti.values, color=bar_colors_bti, edgecolor="none", height=0.65)
+        ax.axvline(80, color="#991B1B", linewidth=1.1, linestyle="--", alpha=0.8)
+        ax.text(81, -0.5, "Alert: 80%", fontsize=6.5, color="#991B1B", va="bottom")
+        ax.set_xlabel("Buffer Time Index (BTI %)\n[Extra buffer above mean to arrive on time 95% of trips]",
+                      fontsize=8, fontweight="bold", color="#0F172A")
+        ax.set_ylabel("Segment Identifier", fontsize=8, fontweight="bold", color="#0F172A")
+        ax.set_title("Commuter Planning Burden — Top 15 Least Reliable Segments",
+                     fontsize=9, fontweight="bold", color="#0F172A", pad=8)
+        ax.tick_params(colors="#0F172A", labelcolor="#0F172A", labelsize=6.5)
+        for sp in ["top", "right"]:
+            ax.spines[sp].set_visible(False)
+        ax.spines["left"].set_color("#CBD5E1")
+        ax.spines["bottom"].set_color("#CBD5E1")
+        plt.tight_layout()
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+        st.caption(
+            "[CHART] BTI % per segment — top 15 worst performers. "
+            "Red bars (BTI >= 80%) require immediate incident response staging. "
+            "Navigate to 'Hypothesis 6: Commuter Uncertainty' for Levene stability tests "
+            "and partial dependence signal-proximity curves."
+        )
+
+    elif chart_cmd == "plot_worst_segments":
+        if "travel_time_index_tti" not in df.columns or "shapefile_segment_name" not in df.columns:
+            st.caption("[INFO] Segment data not available.")
+            return
+        seg_means = (
+            df.groupby("shapefile_segment_name")["travel_time_index_tti"]
+            .agg(["mean", "max", "count"])
+            .rename(columns={"mean": "Mean TTI", "max": "Max TTI", "count": "Observations"})
+            .sort_values("Mean TTI", ascending=False)
+            .head(10)
+        )
+        fig, ax = plt.subplots(figsize=(5.5, 3.5), facecolor="white")
+        ax.set_facecolor("white")
+        x_pos = range(len(seg_means))
+        bars = ax.bar(x_pos, seg_means["Mean TTI"],
+                      color="#1E40AF", edgecolor="none", width=0.6, label="Mean TTI")
+        ax.bar(x_pos, seg_means["Max TTI"] - seg_means["Mean TTI"],
+               bottom=seg_means["Mean TTI"],
+               color="#991B1B", edgecolor="none", width=0.6, alpha=0.55, label="Max TTI extension")
+        ax.axhline(2.2, color="#D97706", linewidth=1.0, linestyle="--", alpha=0.8)
+        ax.text(len(seg_means) - 0.5, 2.23, "Congestion threshold 2.2",
+                fontsize=6, color="#D97706", ha="right")
+        ax.set_xticks(list(x_pos))
+        ax.set_xticklabels([s[:14] for s in seg_means.index], rotation=38, ha="right", fontsize=6.5, color="#0F172A")
+        ax.set_xlabel("Segment Identifier", fontsize=8, fontweight="bold", color="#0F172A")
+        ax.set_ylabel("Travel Time Index (TTI)", fontsize=8, fontweight="bold", color="#0F172A")
+        ax.set_title("Top 10 Worst-Performing Network Segments\n(Mean TTI + Max TTI Extension)",
+                     fontsize=9, fontweight="bold", color="#0F172A", pad=8)
+        ax.legend(fontsize=7, facecolor="white", edgecolor="#CBD5E1")
+        ax.tick_params(colors="#0F172A", labelcolor="#0F172A")
+        for sp in ["top", "right"]:
+            ax.spines[sp].set_visible(False)
+        ax.spines["left"].set_color("#CBD5E1")
+        ax.spines["bottom"].set_color("#CBD5E1")
+        plt.tight_layout()
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+        st.caption(
+            "[CHART] Top 10 segments ranked by Mean TTI. "
+            "Dark blue = mean TTI. Red extension = the gap between mean and worst-recorded TTI. "
+            "Navigate to 'Hypothesis 1: Systemic Bottleneck Localization' for MCBI-ranked "
+            "root-cause vs spillover classification."
+        )
+
+    elif chart_cmd == "plot_corridor_compare":
+        if "travel_time_index_tti" not in df.columns or "corridor_name" not in df.columns:
+            st.caption("[INFO] Corridor data not available.")
+            return
+        corr_stats = (
+            df.groupby("corridor_name")["travel_time_index_tti"]
+            .agg(Mean="mean", P95=lambda x: np.percentile(x.dropna(), 95))
+            .sort_values("Mean", ascending=False)
+            .head(12)
+        )
+        fig, ax = plt.subplots(figsize=(5.5, 3.8), facecolor="white")
+        ax.set_facecolor("white")
+        y_pos = range(len(corr_stats))
+        ax.barh(y_pos, corr_stats["Mean"], color="#1E40AF", height=0.5, label="Mean TTI", edgecolor="none")
+        ax.barh(y_pos, corr_stats["P95"] - corr_stats["Mean"],
+                left=corr_stats["Mean"], color="#991B1B", height=0.5,
+                alpha=0.6, label="P95 extension", edgecolor="none")
+        ax.set_yticks(list(y_pos))
+        ax.set_yticklabels([c[:22] for c in corr_stats.index], fontsize=6.5, color="#0F172A")
+        ax.set_xlabel("Travel Time Index (TTI)", fontsize=8, fontweight="bold", color="#0F172A")
+        ax.set_title("Corridor Comparison — Mean vs P95 TTI\n(Top 12 Worst Corridors)",
+                     fontsize=9, fontweight="bold", color="#0F172A", pad=8)
+        ax.legend(fontsize=7, facecolor="white", edgecolor="#CBD5E1")
+        ax.tick_params(colors="#0F172A", labelcolor="#0F172A")
+        for sp in ["top", "right"]:
+            ax.spines[sp].set_visible(False)
+        ax.spines["left"].set_color("#CBD5E1")
+        ax.spines["bottom"].set_color("#CBD5E1")
+        plt.tight_layout()
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+        st.caption(
+            "[CHART] Corridor-level TTI comparison. Dark blue = mean congestion. "
+            "Red extension = worst-case 95th percentile. Corridors with long red extensions "
+            "are structurally unpredictable — review in 'Hypothesis 6: Commuter Uncertainty'."
+        )
+
+    elif chart_cmd == "plot_aqi_tti":
+        if "indexes_aqi" not in df.columns or "travel_time_index_tti" not in df.columns:
+            st.caption("[INFO] AQI data not available in current window. Run the environmental pipeline first.")
+            return
+        plot_df = df[["travel_time_index_tti", "indexes_aqi"]].dropna().sample(
+            min(600, len(df)), random_state=42
+        )
+        fig, ax = plt.subplots(figsize=(5.5, 3.5), facecolor="white")
+        ax.set_facecolor("white")
+        ax.scatter(
+            plot_df["travel_time_index_tti"], plot_df["indexes_aqi"],
+            color="#1E40AF", s=14, alpha=0.45, edgecolors="none"
+        )
+        # Polynomial fit
+        try:
+            coeffs = np.polyfit(plot_df["travel_time_index_tti"], plot_df["indexes_aqi"], deg=2)
+            x_range = np.linspace(plot_df["travel_time_index_tti"].min(),
+                                  plot_df["travel_time_index_tti"].max(), 120)
+            ax.plot(x_range, np.polyval(coeffs, x_range),
+                    color="#991B1B", linewidth=2.2, label="Polynomial fit (degree 2)")
+        except Exception:
+            pass
+        ax.axvline(1.8, color="#166534", linewidth=1.2, linestyle="--", alpha=0.75)
+        ax.text(1.82, ax.get_ylim()[0] + 2, "Idling inflection\n(TTI = 1.8)",
+                fontsize=6.5, color="#166534")
+        ax.set_xlabel("Travel Time Index (TTI)", fontsize=8.5, fontweight="bold", color="#0F172A")
+        ax.set_ylabel("Localized AQI (Google Environment API)", fontsize=8.5, fontweight="bold", color="#0F172A")
+        ax.set_title("Non-Linear TTI vs AQI Relationship\n(Traffic Emissions Proxy Curve)",
+                     fontsize=9, fontweight="bold", color="#0F172A", pad=8)
+        ax.legend(fontsize=7, facecolor="white", edgecolor="#CBD5E1")
+        ax.tick_params(colors="#0F172A", labelcolor="#0F172A")
+        for sp in ["top", "right"]:
+            ax.spines[sp].set_visible(False)
+        ax.spines["left"].set_color("#CBD5E1")
+        ax.spines["bottom"].set_color("#CBD5E1")
+        plt.tight_layout()
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+        st.caption(
+            "[CHART] Scatter of TTI vs AQI with degree-2 polynomial fit. "
+            "The curve flattens below TTI 1.5 (free-flow dispersion) and accelerates "
+            "above the 1.8 idling threshold. Navigate to "
+            "'Hypothesis 10: Traffic Volume via AQI Proxy' for the full "
+            "SHAP attribution and temporal holdout validation."
+        )
+
+
+def render_ai_assistant_chat(df: pd.DataFrame) -> None:
+    """
+    Render the floating CUMTA Transit AI Advisor chat widget.
+
+    Call this function at the VERY BOTTOM of main(), after all tab blocks,
+    so the floating widget overlays every tab without interrupting any tab's
+    own layout.
+
+    The widget is implemented as a Streamlit expander that is repositioned
+    to the lower-right viewport corner via the CSS injected by
+    _inject_ai_chat_css().  Session state preserves the full conversation
+    history across tab switches and reruns.
+    """
+    # Inject the CSS overlay once per page render
+    _inject_ai_chat_css()
+
+    # Initialise session state keys
+    if "cumta_chat_history" not in st.session_state:
+        st.session_state.cumta_chat_history = []
+    if "cumta_chat_input_key" not in st.session_state:
+        st.session_state.cumta_chat_input_key = 0
+
+    # The zero-height anchor <div> is placed immediately before the expander
+    # so the CSS sibling selector (#cumta-ai-anchor + div[data-testid="stExpander"])
+    # can grab and reposition it.
+    st.markdown('<div id="cumta-ai-anchor"></div>', unsafe_allow_html=True)
+
+    with st.expander("CUMTA Transit AI Advisor  |  Ask a question about any corridor, metric, or chart", expanded=False):
+
+        # ── Conversation history ──────────────────────────────────────────────
+        chat_container = st.container()
+        with chat_container:
+            if not st.session_state.cumta_chat_history:
+                # Welcome message on first load
+                st.markdown(
+                    '<div class="cumta-bubble-ai">'
+                    '<span class="cumta-tag-info">[INFO]</span> '
+                    'CUMTA Transit AI Advisor is active. I know all 10 diagnostic hypotheses, '
+                    'every metric definition (TTI, BTI, PTI, MCBI, Lambda, AQI residuals), '
+                    'and can generate inline micro-charts from your live dataset.<br><br>'
+                    'Type a question — for example: '
+                    '"What is BTI?", "Explain Hypothesis 3", "Plot TTI by hour", '
+                    '"Show worst segments", or "Which corridor needs reversible lanes?"'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                for turn in st.session_state.cumta_chat_history:
+                    role = turn["role"]
+                    content = turn["content"]
+                    if role == "user":
+                        st.markdown(
+                            f'<div class="cumta-chat-label">You</div>'
+                            f'<div class="cumta-bubble-user">{content}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        # AI response — format tags as styled spans
+                        formatted = content.replace(
+                            "[ANALYSIS]", '<span class="cumta-tag-analysis">[ANALYSIS]</span>'
+                        ).replace(
+                            "[CHART RECOMMENDATION]", '<span class="cumta-tag-chart">[CHART RECOMMENDATION]</span>'
+                        ).replace(
+                            "[POLICY INTERVENTION]", '<span class="cumta-tag-policy">[POLICY INTERVENTION]</span>'
+                        ).replace(
+                            "[CRITICAL]", '<span class="cumta-tag-critical">[CRITICAL]</span>'
+                        ).replace(
+                            "[INFO]", '<span class="cumta-tag-info">[INFO]</span>'
+                        ).replace(
+                            "[VERDICT]", '<span class="cumta-tag-analysis">[VERDICT]</span>'
+                        ).replace(
+                            "[METHODOLOGY]", '<span class="cumta-tag-chart">[METHODOLOGY]</span>'
+                        ).replace(
+                            "[CHART]", '<span class="cumta-tag-chart">[CHART]</span>'
+                        ).replace(
+                            "\n", "<br>"
+                        )
+                        st.markdown(
+                            f'<div class="cumta-chat-label">CUMTA AI Advisor</div>'
+                            f'<div class="cumta-bubble-ai">{formatted}</div>',
+                            unsafe_allow_html=True,
+                        )
+                        # Render any micro-chart that was generated for this turn
+                        if turn.get("chart_cmd"):
+                            _render_micro_chart(turn["chart_cmd"], df)
+
+        st.write("")
+
+        # ── Input row ─────────────────────────────────────────────────────────
+        input_col, send_col = st.columns([5, 1])
+        with input_col:
+            user_input = st.text_input(
+                label="Query",
+                placeholder="Ask about a metric, hypothesis, or type a chart command...",
+                label_visibility="collapsed",
+                key=f"cumta_ai_input_{st.session_state.cumta_chat_input_key}",
+            )
+        with send_col:
+            send_clicked = st.button("Send", key=f"cumta_ai_send_{st.session_state.cumta_chat_input_key}", use_container_width=True)
+
+        # ── Clear conversation ────────────────────────────────────────────────
+        clear_col, _, api_status_col = st.columns([1, 2, 2])
+        with clear_col:
+            if st.button("Clear", key="cumta_ai_clear", use_container_width=True):
+                st.session_state.cumta_chat_history = []
+                st.session_state.cumta_chat_input_key += 1
+                st.rerun()
+        with api_status_col:
+            has_key = bool(
+                (st.secrets.get("ANTHROPIC_API_KEY", "") if hasattr(st, "secrets") else "")
+                or os.environ.get("ANTHROPIC_API_KEY", "")
+            )
+            api_badge = (
+                '<span style="font-size:11px;color:#34D399;font-weight:600;">'
+                "[Claude API: ACTIVE]</span>"
+                if has_key
+                else '<span style="font-size:11px;color:#94A3B8;">'
+                "[Rule-based parser mode]</span>"
+            )
+            st.markdown(api_badge, unsafe_allow_html=True)
+
+        # ── Process submission ────────────────────────────────────────────────
+        if (send_clicked or (user_input and user_input.strip())) and user_input.strip():
+            clean_input = user_input.strip()
+
+            # Guard: prevent duplicate submission on rerun
+            already_recorded = (
+                st.session_state.cumta_chat_history
+                and st.session_state.cumta_chat_history[-1]["role"] == "user"
+                and st.session_state.cumta_chat_history[-1]["content"] == clean_input
+            )
+
+            if not already_recorded:
+                # Append user turn
+                st.session_state.cumta_chat_history.append(
+                    {"role": "user", "content": clean_input, "chart_cmd": None}
+                )
+
+                # Generate AI response
+                with st.spinner("Analysing query..."):
+                    ai_text, chart_cmd = _build_ai_response(clean_input, df)
+
+                # Append AI turn
+                st.session_state.cumta_chat_history.append(
+                    {"role": "ai", "content": ai_text, "chart_cmd": chart_cmd}
+                )
+
+                # Bump input key to clear the text_input widget
+                st.session_state.cumta_chat_input_key += 1
+                st.rerun()
+
+        # ── Suggested quick commands ──────────────────────────────────────────
+        if not st.session_state.cumta_chat_history:
+            st.markdown(
+                '<div style="font-size:11px;color:#718096;margin-top:6px;">'
+                "Quick commands: Plot TTI by hour | Show BTI risk | Worst segments | "
+                "Corridor comparison | AQI | Explain Hypothesis 9 | What is MCBI?"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+
+# =============================================================================
 # 2. MASTER ENGINE INTERFACE CONTROLLER
 # =============================================================================
 def main():
@@ -4602,7 +5517,7 @@ def main():
             )
 
         # ── 2. Detailed Analytical Deep-Dive Below Graphs ───────────────────────────
-        st.markdown("""
+        st.markdown(r"""
         >  **Analytical Takeaway & Policy Translation:**
         > * **Non-Linear Exhaust Accumulation:** Below $TTI = 1.5$, traffic flows naturally and exhaust gases disperse smoothly. Beyond $TTI \ge 1.8$, stop-and-go vehicle idling generates localized emission spikes.
         > * **Incident vs. Traffic Disambiguation:** High $TTI$ coupled with an elevated AQI confirms high-density idling. High $TTI$ with flat AQI points to low-volume blockages (e.g., an isolated accident or stalled vehicle).
@@ -4654,6 +5569,16 @@ def main():
             {'Congestion Index': r'Free-Flow ($TTI \le 1.2$)', 'Roadside AQI': 'Baseline Flat / Normal Profile', 'Inferred Traffic Mechanism': 'Optimal Healthy Corridor Operation', 'Targeted CUMTA Policy Intervention': 'Maintain Standard Automated Continuous Tracking Sensor Feeds'}
         ])
         st.table(verification_matrix)
+
+    # =============================================================================
+    # AI ASSISTANT WIDGET  —  rendered last so it floats above every tab
+    # =============================================================================
+    # This call MUST remain at the very bottom of main(), after every tab's
+    # elif block, so the floating chat panel overlays all tabs seamlessly.
+    # df_fetched is passed so the AI can generate live micro-charts from the
+    # currently loaded telemetry window.
+    render_ai_assistant_chat(df_fetched)
+
 
 if __name__ == "__main__":
     try:
