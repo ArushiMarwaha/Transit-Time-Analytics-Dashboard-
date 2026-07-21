@@ -233,9 +233,23 @@ def _fetch_segments_ref() -> Optional[pd.DataFrame]:
     Falls back to the local `data_store/segments_ref.csv` mirror whenever the
     GitHub raw endpoint isn't reachable (404, not yet pushed, offline, etc.)."""
     remote_df = _http_get_csv(SEGMENTS_REF_URL)
-    if remote_df is not None:
-        return remote_df
-    return _local_get_csv(SEGMENTS_REF_LOCAL_PATH)
+    df = remote_df if remote_df is not None else _local_get_csv(SEGMENTS_REF_LOCAL_PATH)
+    if df is None:
+        return None
+
+    # Drop non-analytical audit/bookkeeping columns before this table is
+    # carried through every downstream join and tab.
+    drop_cols = [c for c in ("created_at", "updated_at", "topology_flipped", "continuity_status") if c in df.columns]
+    if drop_cols:
+        df = df.drop(columns=drop_cols)
+
+    # segments_ref is meant to be one row per segment_uid; dedupe defensively
+    # so a stray duplicate can never silently blow up the downstream
+    # many-to-many left-join onto the rolling telemetry pool.
+    if "segment_uid" in df.columns:
+        df = df.drop_duplicates(subset=["segment_uid"]).reset_index(drop=True)
+
+    return df
 
 
 def _collapse_to_one_row_per_segment(df: pd.DataFrame) -> pd.DataFrame:
@@ -837,19 +851,19 @@ def render_ai_assistant_chat(df: pd.DataFrame) -> None:
         st.caption("Quick Analytics Commands:")
         q1, q2, q3 = st.columns(3)
         with q1:
-            if st.button("Plot Diurnal", key="q_tti", use_container_width=True):
+            if st.button("Plot Diurnal", key="q_tti", width="stretch"):
                 st.session_state.cumta_chat_history.append({"role": "user", "content": "Plot TTI by hour"})
                 txt, cmd = _build_ai_response("Plot TTI by hour", df)
                 st.session_state.cumta_chat_history.append({"role": "ai", "content": txt, "chart_cmd": cmd})
                 st.rerun()
         with q2:
-            if st.button(" BTI Risk", key="q_bti", use_container_width=True):
+            if st.button(" BTI Risk", key="q_bti", width="stretch"):
                 st.session_state.cumta_chat_history.append({"role": "user", "content": "show BTI risk"})
                 txt, cmd = _build_ai_response("show BTI risk", df)
                 st.session_state.cumta_chat_history.append({"role": "ai", "content": txt, "chart_cmd": cmd})
                 st.rerun()
         with q3:
-            if st.button("Top Bottlenecks", key="q_worst", use_container_width=True):
+            if st.button("Top Bottlenecks", key="q_worst", width="stretch"):
                 st.session_state.cumta_chat_history.append({"role": "user", "content": "worst segments"})
                 txt, cmd = _build_ai_response("worst segments", df)
                 st.session_state.cumta_chat_history.append({"role": "ai", "content": txt, "chart_cmd": cmd})
@@ -867,12 +881,12 @@ def render_ai_assistant_chat(df: pd.DataFrame) -> None:
                 key=f"cumta_ai_input_{st.session_state.cumta_chat_input_key}",
             )
         with send_col:
-            send_clicked = st.button("Ask", key=f"cumta_ai_send_{st.session_state.cumta_chat_input_key}", use_container_width=True)
+            send_clicked = st.button("Ask", key=f"cumta_ai_send_{st.session_state.cumta_chat_input_key}", width="stretch")
 
         # ── Footer Options & Reset ──────────────────────────────────────────
         clear_col, api_status_col = st.columns([1, 2])
         with clear_col:
-            if st.button("Clear Chat", key="cumta_ai_clear", use_container_width=True):
+            if st.button("Clear Chat", key="cumta_ai_clear", width="stretch"):
                 st.session_state.cumta_chat_history = []
                 st.session_state.cumta_chat_input_key += 1
                 st.rerun()
@@ -1378,7 +1392,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
         ax.legend(handles=legend_handles, fontsize=6.5, loc="upper left",
                   facecolor="white", edgecolor="#CBD5E1")
         plt.tight_layout(pad=1.2)
-        st.pyplot(fig, use_container_width=True)
+        st.pyplot(fig, width="stretch")
         plt.close(fig)
         st.caption(
             "[CHART] Mean TTI per hour across all ingested corridors. "
@@ -1412,7 +1426,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
             st.caption("[INFO] Insufficient records per segment for BTI computation.")
             return
 
-        fig, ax = plt.subplots(figsize=(5.5, max(3.0, 0.28 * len(seg_bti))), facecolor="white")
+        fig, ax = plt.subplots(figsize=(5.5, min(max(3.0, 0.28 * len(seg_bti)), 16.0)), facecolor="white")
         ax.set_facecolor("white")
         bar_colors_bti = ["#991B1B" if v >= 80 else "#D97706" if v >= 40 else "#166534" for v in seg_bti.values]
         ax.barh([s[:20] for s in seg_bti.index], seg_bti.values, color=bar_colors_bti, edgecolor="none", height=0.65)
@@ -1429,7 +1443,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
         ax.spines["left"].set_color("#CBD5E1")
         ax.spines["bottom"].set_color("#CBD5E1")
         plt.tight_layout(pad=1.2)
-        st.pyplot(fig, use_container_width=True)
+        st.pyplot(fig, width="stretch")
         plt.close(fig)
         st.caption(
             "[CHART] BTI % per segment — top 15 worst performers. "
@@ -1473,7 +1487,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
         ax.spines["left"].set_color("#CBD5E1")
         ax.spines["bottom"].set_color("#CBD5E1")
         plt.tight_layout(pad=1.2)
-        st.pyplot(fig, use_container_width=True)
+        st.pyplot(fig, width="stretch")
         plt.close(fig)
         st.caption(
             "[CHART] Top 10 segments ranked by Mean TTI. "
@@ -1511,7 +1525,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
         ax.spines["left"].set_color("#CBD5E1")
         ax.spines["bottom"].set_color("#CBD5E1")
         plt.tight_layout(pad=1.2)
-        st.pyplot(fig, use_container_width=True)
+        st.pyplot(fig, width="stretch")
         plt.close(fig)
         st.caption(
             "[CHART] Corridor-level TTI comparison. Dark blue = mean congestion. "
@@ -1555,7 +1569,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
         ax.spines["left"].set_color("#CBD5E1")
         ax.spines["bottom"].set_color("#CBD5E1")
         plt.tight_layout(pad=1.2)
-        st.pyplot(fig, use_container_width=True)
+        st.pyplot(fig, width="stretch")
         plt.close(fig)
         st.caption(
             "[CHART] Scatter of TTI vs AQI with degree-2 polynomial fit. "
@@ -1729,7 +1743,7 @@ def main():
             st.metric(label="Monitored Shapefile Links", value=unique_seg)
             
         st.write("### Ingested CSV Table View Slice (First 100 Records)")
-        st.dataframe(df_fetched.head(100), use_container_width=True)
+        st.dataframe(df_fetched.head(100), width="stretch")
         
         st.write("### Metadata Data Column Profiles & Operational Summary Specs")
         buffer_summary = pd.DataFrame({
@@ -1825,7 +1839,7 @@ def main():
                     "Direct evidence the segment — not a neighbor — originates the queue",
                 ],
             })
-            st.dataframe(weight_table, use_container_width=True, hide_index=True)
+            st.dataframe(weight_table, width="stretch", hide_index=True)
             st.caption(
                 "All four weights apply to every segment now, single-segment or not, since the root-cause test "
                 "always produces a real event count (see the self-persistence note above)."
@@ -2077,7 +2091,7 @@ def main():
                                            ('font-weight', '600'), ('font-size', '12.5px'),
                                            ('text-transform', 'uppercase'), ('letter-spacing', '0.02em')]}
          ])
-        st.dataframe(styled_df, use_container_width=True)
+        st.dataframe(styled_df, width="stretch")
  
         st.write("---")
         section_title("Corridor-Level Summary")
@@ -2095,7 +2109,7 @@ def main():
                                           ('font-weight', '600'), ('font-size', '12.5px'),
                                           ('text-transform', 'uppercase')]}
         ])
-        st.dataframe(corridor_styled, use_container_width=True)
+        st.dataframe(corridor_styled, width="stretch")
         st.caption(
             "Corridors with only one monitored segment (segments_monitored = 1) are judged by the self-persistence "
             "test described above, not by comparison to an upstream neighbor."
@@ -2141,6 +2155,7 @@ def main():
         plt.yticks(fontsize=8)
         plt.tight_layout(pad=1.2)
         st.pyplot(fig1)
+        plt.close(fig1)
         st.caption("The red block is the only component tied to confirmed causal evidence; a segment with a tall red block is a verified root cause. A segment can still rank highly with a small red block if the other three components are large enough — that's the MCBI-vs-declared-bottleneck gap explained above.")
  
         # ==============================================================================
@@ -2168,7 +2183,7 @@ def main():
         heat_pivot = heat_pivot.reindex(range(24))
         heat_pivot.columns = [seg_label_map.get(s, s) for s in seg_order_all]
  
-        fig_seg_heat, ax_seg_heat = plt.subplots(figsize=(max(10, 1.8 * len(seg_order_all)), 8))
+        fig_seg_heat, ax_seg_heat = plt.subplots(figsize=(min(max(10, 1.8 * len(seg_order_all)), 40.0), 8))
         sns.heatmap(
             heat_pivot, cmap='YlOrRd', vmin=0, vmax=1, ax=ax_seg_heat,
             cbar_kws={'label': 'Congestion strength (fraction of hour congested)'},
@@ -2192,6 +2207,7 @@ def main():
         plt.yticks(fontsize=8.5)
         plt.tight_layout(pad=1.2)
         st.pyplot(fig_seg_heat)
+        plt.close(fig_seg_heat)
         st.caption(
             "Central-Puzhal and Puzhal-Central are shown as two independent columns here - they are opposite "
             "one-way directions, not one corridor, and are never averaged together."
@@ -2248,6 +2264,7 @@ def main():
  
         plt.tight_layout(pad=1.2)
         st.pyplot(fig3)
+        plt.close(fig3)
         st.caption("A profile staying above the red threshold line for an extended stretch, on both weekdays and weekends, points to a structural constraint rather than ordinary peak demand. The colored strip on the left of each panel matches the segment's status (red/yellow/green).")
  
         # ==============================================================================
@@ -2287,6 +2304,7 @@ def main():
                 plt.yticks(fontsize=8, color='#4a5568')
                 plt.tight_layout(pad=1.2)
                 st.pyplot(fig4)
+                plt.close(fig4)
  
                 n_rc_total = int(case_df['root_cause_event'].sum())
                 st.caption(
@@ -2387,6 +2405,7 @@ def main():
             style_axes(ax_ml)
             plt.tight_layout(pad=1.2)
             st.pyplot(fig_ml)
+            plt.close(fig_ml)
             st.caption(
                 "Positive bars increase next-interval breakdown risk; negative bars are protective. Segments the "
                 "rule-based classifier tags as spillover should show 'Upstream congested' as their dominant risk "
@@ -2404,7 +2423,7 @@ def main():
                 lambda col: [STATUS_STYLE.get(v, '') for v in col] if col.name == 'Rule-based classification' else ['' for _ in col],
                 axis=0
             ).format({'ML breakdown risk (avg)': '{:.1%}'})
-            st.dataframe(styled_risk, use_container_width=True)
+            st.dataframe(styled_risk, width="stretch")
             st.caption(
                 "A high ML risk score alongside a 'No structural issue detected' rule-based tag is worth a second "
                 "look — it means the model sees a recurring pattern the fixed threshold rule may be missing."
@@ -2567,7 +2586,7 @@ def main():
         st.write("---")
  
         section_title("Peak-Hour Identification & Operational Clearance Timeline")
-        st.dataframe(peak_report_df, use_container_width=True)
+        st.dataframe(peak_report_df, width="stretch")
  
         section_title("Infrastructure Failure Rate Matrix: Weekday Commutes vs. Weekend Leisure Volumes")
         fig_bar, ax_bar = plt.subplots(figsize=(10, 4.5))
@@ -2591,6 +2610,7 @@ def main():
         style_axes(ax_bar)
         plt.tight_layout(pad=1.2)
         st.pyplot(fig_bar)
+        plt.close(fig_bar)
  
         # ==============================================================================
         # CORRIDOR CONGESTION-RATIO HEATMAPS — hour of day vs day type, all corridors
@@ -2623,6 +2643,7 @@ def main():
             ax_hm.tick_params(colors='#4a5568')
             plt.tight_layout(pad=1.2)
             st.pyplot(fig_hm)
+            plt.close(fig_hm)
  
  
         st.write("---")
@@ -2660,6 +2681,7 @@ def main():
                 
             st.caption(f"Network Corridor Workspace Profile: {corr.upper()}")
             st.pyplot(fig_line)
+            plt.close(fig_line)
  
         # ==============================================================================
         # MACHINE LEARNING CROSS-CHECK: SMOOTHED FAILURE-PROBABILITY MODEL
@@ -2754,7 +2776,7 @@ def main():
  
             peak_compare_records = []
             n_corr_for_plot = min(len(unique_corridors), 6)
-            fig_smooth, axes_smooth = plt.subplots(1, n_corr_for_plot, figsize=(4.2 * n_corr_for_plot, 3.4), sharey=True)
+            fig_smooth, axes_smooth = plt.subplots(1, n_corr_for_plot, figsize=(min(4.2 * n_corr_for_plot, 30.0), 3.4), sharey=True)
             if n_corr_for_plot == 1:
                 axes_smooth = [axes_smooth]
  
@@ -2783,8 +2805,9 @@ def main():
                 style_axes(ax_s)
  
             axes_smooth[0].set_ylabel("Failure probability", fontsize=8, fontweight='bold', color='#1a1a2e')
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_smooth)
+            plt.close(fig_smooth)
             st.caption(
                 "Grey dotted = raw empirical failure rate per hour (noisy, small per-hour sample). Red solid = "
                 "model-smoothed probability. Where the two diverge sharply, the empirical peak-hour finding is "
@@ -2792,7 +2815,7 @@ def main():
             )
  
             peak_compare_df = pd.DataFrame(peak_compare_records)
-            st.dataframe(peak_compare_df, use_container_width=True)
+            st.dataframe(peak_compare_df, width="stretch")
         else:
             st.info("Not enough labeled intervals (or only one outcome class present) in this dataset yet to train a reliable model.")
  
@@ -3063,7 +3086,7 @@ def main():
                     .map(lambda v: "color:#991B1B;font-weight:700" if v == "Quadrant I: Persistent Congestion"
                               else ("color:#D97706;font-weight:700" if v == "Quadrant II: Temporal Congestion"
                                     else "color:#166534"), subset=["classification"]),
-                    use_container_width=True, hide_index=True, height=450
+                    width="stretch", hide_index=True, height=450
                 )
             else:
                 st.markdown("**Corridor Aggregate Summary**")
@@ -3076,7 +3099,7 @@ def main():
                     .set_properties(**{"font-size": "11px"})
                     .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"),
                                                                      ("color", "white"), ("font-weight", "600")]}]),
-                    use_container_width=True, hide_index=True, height=450
+                    width="stretch", hide_index=True, height=450
                 )
         st.write("---")
 
@@ -3119,8 +3142,9 @@ def main():
             ax_q3.set_title("2D Structural Dispersion Matrix", fontsize=10, fontweight="bold", color="#0F172A")
             ax_q3.legend(fontsize=7.5, loc="upper left", facecolor="white", edgecolor="#CBD5E1", labelcolor="#0F172A")
             style_axes(ax_q3)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_q3)
+            plt.close(fig_q3)
             st.caption("Segments in the top-right red zone fail regardless of traffic volume — infrastructure is the constraint.")
         # ── Policy & Analytical Breakdown ─────────────────────────────────────
         st.markdown("""
@@ -3136,8 +3160,8 @@ def main():
             ax_lane_h3 = fig_lane_h3.add_subplot(111, facecolor="white")
             if selected_corridor_h3 == "All Corridors":
                 sns.boxplot(
-                    data=df_seg, x="delta_lanes", y="mean_peak_tti",
-                    palette=["#CBD5E1", "#D97706", "#991B1B"],
+                    data=df_seg, x="delta_lanes", y="mean_peak_tti", hue="delta_lanes",
+                    palette=["#CBD5E1", "#D97706", "#991B1B"], legend=False,
                     ax=ax_lane_h3, width=0.5
                 )
                 ax_lane_h3.set_xlabel(r"Downstream Lane Drop ($\Delta$Lanes per Segment)",
@@ -3161,8 +3185,9 @@ def main():
                 ax_lane_h3.set_title("Per-Segment Lane Drop Profile", fontsize=10, fontweight="bold", color="#0F172A")
             ax_lane_h3.grid(axis="y", linestyle=":", alpha=0.4)
             style_axes(ax_lane_h3)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_lane_h3)
+            plt.close(fig_lane_h3)
             st.caption("Positive delta values signal downstream road narrowing — a primary geometric chokepoint driver.")
 
         # ── Mann-Whitney U Test ───────────────────────────────────────────────
@@ -3236,8 +3261,9 @@ def main():
                       r"Bus-Stop Friction Index ($F_{\mathrm{bus}}$)",
                       "Median Off-Peak TTI",
                       "PDP: Bus Friction vs Off-Peak Delay")
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_pdp_bus)
+            plt.close(fig_pdp_bus)
             st.caption("Isolates where bus proximity + narrow lanes generates baseline friction even under zero demand.")
 
         with col_g4:
@@ -3248,8 +3274,9 @@ def main():
                       "Median Off-Peak TTI",
                       "PDP: Signal Density vs Off-Peak Delay",
                       highlight_thresh=df_seg["signal_density"].quantile(0.75) if len(df_seg) > 3 else None)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_pdp_sig)
+            plt.close(fig_pdp_sig)
             st.caption("Identifies the density threshold at which signal clustering creates permanent speed decay.")
 
         # ── Corridor-level summary table ──────────────────────────────────────
@@ -3271,7 +3298,7 @@ def main():
                            "Avg ΔLanes": "{:.2f}", "Avg Signal Density": "{:.3f}"})
             .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"),
                                                              ("color", "white"), ("font-weight", "600")]}]),
-            use_container_width=True, hide_index=True
+            width="stretch", hide_index=True
         )
 
         # ── Policy Matrix ─────────────────────────────────────────────────────
@@ -3409,7 +3436,7 @@ def main():
         st.write("---")
  
         section_title("Micro-Segment Sensitivity Matrix (Ranked by Weather-Delay Inflation Impact)")
-        st.dataframe(segment_report_df.style.format({'dry_base_tti': '{:.2f}', 'rain_slope': '{:.4f}', 'delay_inflation': '{:.2%}'}), use_container_width=True)
+        st.dataframe(segment_report_df.style.format({'dry_base_tti': '{:.2f}', 'rain_slope': '{:.4f}', 'delay_inflation': '{:.2%}'}), width="stretch")
  
         section_title("Micro-Segment Co-Regression Sensitivities & Elasticity Trend Curves")
         top_vulnerable_segments = segment_report_df.head(3)['segment_name'].tolist()
@@ -3450,6 +3477,7 @@ def main():
             
             st.caption(f"Geometric Weather Impact Profile: Micro-Link {seg} [{p_corr}]")
             st.pyplot(fig_w)
+            plt.close(fig_w)
  
         # ==============================================================================
         # MACHINE LEARNING CROSS-CHECK: MULTIVARIATE OLS WITH SEGMENT FIXED EFFECTS
@@ -3558,12 +3586,13 @@ def main():
             ax_coef.set_xlabel("Coefficient (TTI points per unit, holding other factors fixed)", fontsize=9, color='#1a1a2e', fontweight='bold')
             ax_coef.grid(axis='x', linestyle=':', alpha=0.4)
             style_axes(ax_coef)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_coef)
+            plt.close(fig_coef)
  
             st.dataframe(
                 key_report.style.format({'coefficient': '{:.4f}', 'std_error': '{:.4f}', 't_stat': '{:.2f}', 'p_value': '{:.4f}'}),
-                use_container_width=True
+                width="stretch"
             )
             st.caption(
                 "p_value < 0.05 means that factor's effect on TTI is statistically distinguishable from zero at the "
@@ -3883,7 +3912,7 @@ def main():
                 .map(lambda v: "color:#991B1B;font-weight:700" if v else "color:#166534", subset=["Inversion Loop"])
                 .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}])
                 .set_properties(**{"font-size": "11px"}),
-                use_container_width=True, hide_index=True, height=450
+                width="stretch", hide_index=True, height=450
             )
         st.write("---")
 
@@ -3915,8 +3944,9 @@ def main():
             ax_lambda.legend(fontsize=6.5, loc="upper right", facecolor="white", edgecolor="#CBD5E1", ncol=2)
             ax_lambda.grid(True, linestyle=":", alpha=0.4)
             style_axes(ax_lambda)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_lambda)
+            plt.close(fig_lambda)
             st.caption("Values diverging from 1.0 confirm directional imbalances. The inversion loop is the flip across both red/amber thresholds.")
 
         with col_g2_h5:
@@ -3940,8 +3970,9 @@ def main():
             ax_db.tick_params(labelsize=6.5)
             style_axes(ax_da)
             style_axes(ax_db)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_heat)
+            plt.close(fig_heat)
             st.caption("Side-by-side heatmaps expose the directional load mismatch. Deep red in opposing windows = tidal flow.")
 
         # ── Statistical Test Summary ──────────────────────────────────────────
@@ -3976,7 +4007,7 @@ def main():
                 else ("color:#D97706;font-weight:600" if v == "Moderate Asymmetry"
                     else "color:#166534"), subset=["Tidal Classification"])
             .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}]),
-            use_container_width=True, hide_index=True
+            width="stretch", hide_index=True
         )
 
         # ── Policy Matrix ─────────────────────────────────────────────────────
@@ -4216,7 +4247,7 @@ def main():
                 .map(lambda v: "color:#991B1B;font-weight:700" if isinstance(v, float) and v >= bti_alert_threshold else "", subset=["BTI %"])
                 .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}])
                 .set_properties(**{"font-size": "11px"}),
-                use_container_width=True, hide_index=True, height=450
+                width="stretch", hide_index=True, height=450
             )
         st.write("---")
 
@@ -4253,8 +4284,9 @@ def main():
                 ax_ols_h6.legend(fontsize=8.5, facecolor="white")
                 ax_ols_h6.grid(True, linestyle=":", alpha=0.3)
                 style_axes(ax_ols_h6)
-                plt.tight_layout()
+                plt.tight_layout(pad=1.2)
                 st.pyplot(fig_ols_h6)
+                plt.close(fig_ols_h6)
 
                 beta1_interp = ("uncertainty expands non-linearly — structural volatility" if beta_h6[1] > 0
                                 else "predictable slowdown — variance stays controlled as TTI rises")
@@ -4335,8 +4367,9 @@ def main():
 
                 style_axes(ax_imp_h6)
                 style_axes(ax_cv_h6)
-                plt.tight_layout()
+                plt.tight_layout(pad=1.2)
                 st.pyplot(fig_rf_h6)
+                plt.close(fig_rf_h6)
                 st.caption("Feature importance identifies which infrastructure attributes drive commuter uncertainty across the network.")
             else:
                 st.info("Insufficient segments available in this selection to compute feature attribution.")
@@ -4373,8 +4406,9 @@ def main():
             ax_pdp_h6.set_title("PDP: Signal Proximity → Commuter Uncertainty", fontsize=9.5, fontweight="bold", color="#0F172A")
             ax_pdp_h6.grid(True, linestyle=":", alpha=0.35)
             style_axes(ax_pdp_h6)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_pdp_h6)
+            plt.close(fig_pdp_h6)
             st.caption("Identifies the spatial boundary where intersection queue back-pressure inflates commuter uncertainty.")
 
         with col_g4_h6:
@@ -4411,7 +4445,7 @@ def main():
                               subset=["Stability"])
                     .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}])
                     .set_properties(**{"font-size": "11px"}),
-                    use_container_width=True, hide_index=True, height=370
+                    width="stretch", hide_index=True, height=370
                 )
             else:
                 st.info("Insufficient observations per segment (need ≥ 9 peak records) for Levene test. Broaden the time window.")
@@ -4430,7 +4464,7 @@ def main():
                       else ("color:#D97706;font-weight:600" if v == "Moderate" else "color:#166534"),
                       subset=["Risk Rating"])
             .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}]),
-            use_container_width=True, hide_index=True
+            width="stretch", hide_index=True
         )
 
         # ── Policy Matrix ─────────────────────────────────────────────────────
@@ -4604,7 +4638,7 @@ def main():
                         'displacement_rate': '{:.1%}', 'p_downstream_congested_given_flyover_free': '{:.1%}',
                         'p_downstream_congested_given_flyover_congested': '{:.1%}',
                     }),
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.caption(
                     "The last two columns are the direct mathematical proof: if "
@@ -4631,8 +4665,9 @@ def main():
                     ax_pair.grid(True, linestyle=':', alpha=0.4)
                     ax_pair.legend(loc='upper left', fontsize=8.5)
                     style_axes(ax_pair)
-                    plt.tight_layout()
+                    plt.tight_layout(pad=1.2)
                     st.pyplot(fig_pair)
+                    plt.close(fig_pair)
                 st.caption(
                     "If the blue (flyover) line stays low/flat while the red (downstream exit) line spikes at the "
                     "same hours, that is the visual signature of displacement rather than genuine congestion relief."
@@ -4719,8 +4754,9 @@ def main():
                             ax_imp_h7.set_xlabel("Feature importance (Gini)", fontsize=9, fontweight='bold', color='#1a1a2e')
                             ax_imp_h7.grid(axis='x', linestyle=':', alpha=0.4)
                             style_axes(ax_imp_h7)
-                            plt.tight_layout()
+                            plt.tight_layout(pad=1.2)
                             st.pyplot(fig_imp_h7)
+                            plt.close(fig_imp_h7)
 
                             if top_predictor in ('Flyover congested (0/1)', 'Flyover TTI'):
                                 render_callout(
@@ -4940,7 +4976,7 @@ def main():
                     'max_micro_peak_tti': '{:.2f}', 'macro_peak_tti': '{:.2f}',
                     'dilution_gap': '{:.2f}', 'underreport_pct': '{:.0f}%'
                 }),
-                use_container_width=True
+                width="stretch"
             )
 
             section_title(f"Worst Group in Detail: {top_group['macro_group_id']}")
@@ -4963,8 +4999,9 @@ def main():
             ax_dil.grid(True, linestyle=':', alpha=0.4)
             ax_dil.legend(loc='upper left', fontsize=8)
             style_axes(ax_dil)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_dil)
+            plt.close(fig_dil)
             st.caption(
                 "Colored lines are the real constituent micro-segments; the dashed black line is what the combined "
                 "macro-segment reports. A visible gap between the dashed line and the highest colored peak is the "
@@ -5020,8 +5057,9 @@ def main():
                     ax_imp_h8.set_xlabel("Feature importance (MSE reduction)", fontsize=9, fontweight='bold', color='#1a1a2e')
                     ax_imp_h8.grid(axis='x', linestyle=':', alpha=0.4)
                     style_axes(ax_imp_h8)
-                    plt.tight_layout()
+                    plt.tight_layout(pad=1.2)
                     st.pyplot(fig_imp_h8)
+                    plt.close(fig_imp_h8)
                     st.caption(
                         "If 'Variance among micro peaks' dominates, dilution is driven by how spiky one specific localized segment is "
                         "relative to its immediate neighbors — not simply by how many segments get clubbed together."
@@ -5179,7 +5217,7 @@ def main():
         with c_panel:
             st.dataframe(df_tax_base.style.format({'mu_peak': '{:.2f}', 'mu_offpeak': '{:.2f}', 'bti_val': '{:.1f}%'}).set_properties(**{'font-size': '12px'}).set_table_styles([
                  {'selector': 'th', 'props': [('background-color', '#1A293B'), ('color', 'white'), ('font-weight', '600')]}
-            ]), use_container_width=True, hide_index=True, height=410)
+            ]), width="stretch", hide_index=True, height=410)
         st.write("---")
 
         # ==============================================================================
@@ -5199,6 +5237,7 @@ def main():
             )
             style_axes(ax_corr)
             st.pyplot(fig_corr)
+            plt.close(fig_corr)
             st.caption(
                 "[INFO] Pearson correlation check isolates duplicate metrics to prevent doubled feature weight "
                 "anomalies. Cells closer to 1.0 (deep red) flag features carrying redundant signal."
@@ -5225,6 +5264,7 @@ def main():
                 text_h.set_color('#0F172A')
             style_axes(ax_pca)
             st.pyplot(fig_pca)
+            plt.close(fig_pca)
             st.caption(
                 "[INFO] PCA dimension reduction exposes the natural clusters of segments across the network layout. "
                 "Tight, well-separated color blocks confirm the four taxonomy groups are behaviorally distinct."
@@ -5255,6 +5295,7 @@ def main():
                 text_h.set_color('#0F172A')
             style_axes(ax_opt)
             st.pyplot(fig_opt)
+            plt.close(fig_opt)
             st.caption(
                 f"[VERDICT] Internal silhouette validation confirms K={best_k} creates the best mathematical "
                 f"separation profile (coefficient = {best_silhouette:.2f}), matching the four-cluster policy taxonomy above."
@@ -5276,6 +5317,7 @@ def main():
                 text_h.set_color('#0F172A')
             style_axes(ax_boot)
             st.pyplot(fig_boot)
+            plt.close(fig_boot)
             st.caption(
                 "[VERDICT] Bootstrap stability check: the observed ARI distribution sits comfortably above the "
                 "0.82 threshold, proving clusters reflect stable travel archetypes rather than resampling noise."
@@ -5410,7 +5452,7 @@ def main():
             st.dataframe(
                 df_env_agg.style.format({'avg_tti': '{:.2f}', 'avg_aqi': '{:.2f}', 'avg_ws': '{:.1f} m/s'})
                 .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"), ("color", "white"), ("font-weight", "600")]}]),
-                use_container_width=True, hide_index=True, height=410
+                width="stretch", hide_index=True, height=410
             )
         st.write("---")
 
@@ -5458,8 +5500,9 @@ def main():
                 text_h.set_color('#0F172A')
             style_axes(ax_e1)
             ax_e1.spines['left'].set_color(TTI_COLOR)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_e1)
+            plt.close(fig_e1)
             st.caption(
                 "[INFO] Diurnal cycle tracking shows how travel delays (red, left axis) and air pollution peaks "
                 "(green, right axis) align over a 24-hour window."
@@ -5501,8 +5544,9 @@ def main():
             for text_h in leg2.get_texts():
                 text_h.set_color('#0F172A')
             style_axes(ax_e2)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_e2)
+            plt.close(fig_e2)
             st.caption(
                 "[VERDICT] Non-linear response curve capturing localized emission spikes during vehicle idling. "
                 "Unlike linear models distorted by atmospheric dispersion, this curve isolates severe congestion "
@@ -5531,8 +5575,9 @@ def main():
             ax_e3.set_xlabel(r"Mean Absolute Game-Theoretic Contribution Score ($|\phi_i|$)", fontweight='bold', color='#0F172A', fontsize=8)
             ax_e3.grid(True, linestyle=':', alpha=0.4, color='#CBD5E1')
             style_axes(ax_e3)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_e3)
+            plt.close(fig_e3)
             st.caption("SHAP parameters isolate exactly how much traffic drivers contribute to localized pollution spikes.")
 
         with col_g4:
@@ -5546,8 +5591,9 @@ def main():
             ax_e4.grid(True, linestyle=':', alpha=0.4, color='#CBD5E1')
             ax_e4.legend(loc='lower left', facecolor='white', edgecolor='#CBD5E1')
             style_axes(ax_e4)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_e4)
+            plt.close(fig_e4)
             st.caption("Low validation errors confirm the model is ready to support infrastructure spending reviews.")
 
         # ==============================================================================
