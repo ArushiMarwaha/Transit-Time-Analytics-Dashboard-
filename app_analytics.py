@@ -1377,7 +1377,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
         ]
         ax.legend(handles=legend_handles, fontsize=6.5, loc="upper left",
                   facecolor="white", edgecolor="#CBD5E1")
-        plt.tight_layout()
+        plt.tight_layout(pad=1.2)
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
         st.caption(
@@ -1428,7 +1428,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
             ax.spines[sp].set_visible(False)
         ax.spines["left"].set_color("#CBD5E1")
         ax.spines["bottom"].set_color("#CBD5E1")
-        plt.tight_layout()
+        plt.tight_layout(pad=1.2)
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
         st.caption(
@@ -1472,7 +1472,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
             ax.spines[sp].set_visible(False)
         ax.spines["left"].set_color("#CBD5E1")
         ax.spines["bottom"].set_color("#CBD5E1")
-        plt.tight_layout()
+        plt.tight_layout(pad=1.2)
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
         st.caption(
@@ -1510,7 +1510,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
             ax.spines[sp].set_visible(False)
         ax.spines["left"].set_color("#CBD5E1")
         ax.spines["bottom"].set_color("#CBD5E1")
-        plt.tight_layout()
+        plt.tight_layout(pad=1.2)
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
         st.caption(
@@ -1554,7 +1554,7 @@ def _render_micro_chart(chart_cmd: str, df: pd.DataFrame) -> None:
             ax.spines[sp].set_visible(False)
         ax.spines["left"].set_color("#CBD5E1")
         ax.spines["bottom"].set_color("#CBD5E1")
-        plt.tight_layout()
+        plt.tight_layout(pad=1.2)
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
         st.caption(
@@ -2139,7 +2139,7 @@ def main():
         style_axes(ax1)
         plt.xticks(rotation=15, ha='right', fontsize=8)
         plt.yticks(fontsize=8)
-        plt.tight_layout()
+        plt.tight_layout(pad=1.2)
         st.pyplot(fig1)
         st.caption("The red block is the only component tied to confirmed causal evidence; a segment with a tall red block is a verified root cause. A segment can still rank highly with a small red block if the other three components are large enough — that's the MCBI-vs-declared-bottleneck gap explained above.")
  
@@ -2190,7 +2190,7 @@ def main():
         ax_seg_heat.set_ylabel("Hour of day", fontsize=10, fontweight='bold', color='#1a1a2e')
         plt.xticks(rotation=30, ha='right', fontsize=8.5)
         plt.yticks(fontsize=8.5)
-        plt.tight_layout()
+        plt.tight_layout(pad=1.2)
         st.pyplot(fig_seg_heat)
         st.caption(
             "Central-Puzhal and Puzhal-Central are shown as two independent columns here - they are opposite "
@@ -2209,7 +2209,8 @@ def main():
         mean_failure_line = congestion_bounds.mean()
         n_top = len(top_5_segments)
  
-        fig3 = plt.figure(figsize=(20, 6.5 * max(n_top, 1)))
+        # NEW (SAFE MEMORY FOOTPRINT)
+        fig3 = plt.figure(figsize=(12, min(4.0 * max(n_top, 1), 16.0)))
         gs = fig3.add_gridspec(max(n_top, 1), 1, hspace=0.55)
  
         for rank, (_, row) in enumerate(top_5_segments.iterrows()):
@@ -2245,7 +2246,7 @@ def main():
             ax_trend.axvspan(-0.4, 0, color=badge_color, alpha=0.9, zorder=5)
             style_axes(ax_trend)
  
-        plt.tight_layout()
+        plt.tight_layout(pad=1.2)
         st.pyplot(fig3)
         st.caption("A profile staying above the red threshold line for an extended stretch, on both weekdays and weekends, points to a structural constraint rather than ordinary peak demand. The colored strip on the left of each panel matches the segment's status (red/yellow/green).")
  
@@ -2284,7 +2285,7 @@ def main():
                 style_axes(ax4)
                 plt.xticks(fontsize=8, color='#4a5568')
                 plt.yticks(fontsize=8, color='#4a5568')
-                plt.tight_layout()
+                plt.tight_layout(pad=1.2)
                 st.pyplot(fig4)
  
                 n_rc_total = int(case_df['root_cause_event'].sum())
@@ -2384,7 +2385,7 @@ def main():
             ax_ml.set_xlabel("Standardized coefficient (pushes risk up →, down ←)", fontsize=9, color='#1a1a2e', fontweight='bold')
             ax_ml.grid(axis='x', linestyle=':', alpha=0.4)
             style_axes(ax_ml)
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_ml)
             st.caption(
                 "Positive bars increase next-interval breakdown risk; negative bars are protective. Segments the "
@@ -2588,7 +2589,7 @@ def main():
         ax_bar.grid(axis='y', linestyle=':', alpha=0.4)
         ax_bar.legend(loc='upper right', fontsize=8.5, frameon=True, facecolor='white')
         style_axes(ax_bar)
-        plt.tight_layout()
+        plt.tight_layout(pad=1.2)
         st.pyplot(fig_bar)
  
         # ==============================================================================
@@ -2620,7 +2621,7 @@ def main():
             ax_hm.set_xlabel("Hour of day", fontsize=9, color='#1a1a2e', fontweight='bold')
             ax_hm.set_ylabel("")
             ax_hm.tick_params(colors='#4a5568')
-            plt.tight_layout()
+            plt.tight_layout(pad=1.2)
             st.pyplot(fig_hm)
  
  
