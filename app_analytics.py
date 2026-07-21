@@ -4202,33 +4202,33 @@ def main():
         
         with c_map:
             m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="CartoDB positron")
-            colors_palette_map = {0: '#991B1B', 1: '#D97706', 2: '#166534', 3: '#1E40AF'}
+            
+            # ── Add HTML Floating Legend Element ─────────────────────────────
+            legend_html_h9 = """
+            <div style="position:fixed;bottom:30px;left:30px;z-index:9999;background:white;
+                        padding:12px 16px;border-radius:8px;border:1px solid #CBD5E1;
+                        box-shadow: 0 2px 6px rgba(0,0,0,0.15);font-size:12px;font-family:sans-serif;">
+              <b style="color:#0F172A;font-size:13px;">Behavioral Clusters</b><br><hr style="margin:4px 0 8px 0;border-color:#E2E8F0;">
+              <span style="color:#991B1B;">&#9632;</span> Cluster A: Chronic Structural<br>
+              <span style="color:#D97706;">&#9632;</span> Cluster B: Peak Operational<br>
+              <span style="color:#166534;">&#9632;</span> Cluster C: Climate-Vulnerable<br>
+              <span style="color:#1E293B;">&#9632;</span> Cluster D: Tidal Commuter
+            </div>"""
+            m.get_root().html.add_child(folium.Element(legend_html_h9))
+
+            # ── Plot Circle Markers ──────────────────────────────────────────
+            colors_palette_map = {0: '#991B1B', 1: '#D97706', 2: '#166534', 3: '#1E293B'}
             for _, r in df_tax_base.dropna(subset=["lat", "lon"]).iterrows():
                 folium.CircleMarker(
-                    [r["lat"], r["lon"]], radius=5, color=colors_palette_map.get(r['cluster_id'], '#7F7F7F'), fill=True, opacity=0.8,
-                    tooltip=f"Link: {r['shapefile_segment_name']}<br>Template Allocation: {r['assigned_taxonomy']}"
+                    [r["lat"], r["lon"]], 
+                    radius=5, 
+                    color=colors_palette_map.get(r['cluster_id'], '#7F7F7F'), 
+                    fill=True, 
+                    fill_color=colors_palette_map.get(r['cluster_id'], '#7F7F7F'),
+                    fill_opacity=0.85,
+                    tooltip=f"<b>Link:</b> {r['shapefile_segment_name']}<br><b>Taxonomy:</b> {r['assigned_taxonomy']}"
                 ).add_to(m)
-            # Define HTML Legend with explicit black text styling
-            legend_html = '''
-            <div style="position: fixed; 
-                        bottom: 30px; left: 30px; width: 220px; height: auto; 
-                        background-color: white; z-index:9999; font-size:12px;
-                        border:2px solid #CBD5E1; border-radius:6px; padding: 10px;
-                        color: #0F172A; font-weight: bold; box-shadow: 2px 2px 6px rgba(0,0,0,0.2);">
-                <span style="color: #0F172A; font-size: 13px; font-weight: bold;">Behavioral Taxonomy</span><br>
-                <div style="margin-top: 5px;">
-                    <i style="background:#991B1B; width:12px; height:12px; display:inline-block; border-radius:50%; margin-right:5px;"></i>
-                    <span style="color: #0F172A;">Cluster A: Chronic Structural</span><br>
-                    <i style="background:#D97706; width:12px; height:12px; display:inline-block; border-radius:50%; margin-right:5px;"></i>
-                    <span style="color: #0F172A;">Cluster B: Peak Operational</span><br>
-                    <i style="background:#166534; width:12px; height:12px; display:inline-block; border-radius:50%; margin-right:5px;"></i>
-                    <span style="color: #0F172A;">Cluster C: Climate-Vulnerable</span><br>
-                    <i style="background:#1E40AF; width:12px; height:12px; display:inline-block; border-radius:50%; margin-right:5px;"></i>
-                    <span style="color: #0F172A;">Cluster D: Tidal Commuter</span>
-                </div>
-            </div>
-            '''
-            m.get_root().html.add_child(folium.Element(legend_html))
+                
             st_folium(m, height=450, use_container_width=True, returned_objects=[], key="map_geo_taxonomy")
             
         with c_panel:
