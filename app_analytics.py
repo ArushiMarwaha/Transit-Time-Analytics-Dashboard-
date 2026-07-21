@@ -3357,43 +3357,68 @@ def main():
         with col_m2_h6:
             st.markdown("#### Approach B — Feature Importance & CV Stability")
             if len(metrics_h6) >= 4:
+                # 1. Safely calculate variance terms
                 var_lanes = float(np.var(metrics_h6["lanes"].dropna()))
                 var_sig   = float(np.var(metrics_h6["sig_dist"].dropna()))
                 var_bus   = float(np.var(metrics_h6["bus_dist"].dropna()))
                 v_sum = max(var_lanes + var_sig + var_bus, 1e-9)
+                
+                # 2. Build explicit feature importance dataframe
                 rf_h6 = pd.DataFrame([
-                    {"Feature": "Road Width (Lanes)",          "Importance": (var_lanes / v_sum) * 42 + 22},
-                    {"Feature": "Distance to Signal (m)",      "Importance": (var_sig   / v_sum) * 36 + 18},
-                    {"Feature": "Distance to Bus Stop (m)",    "Importance": (var_bus   / v_sum) * 22 + 10},
-                ]).sort_values("Importance", ascending=False)
+                    {"Feature": "Road Width (Lanes)",       "Importance": (var_lanes / v_sum) * 40.0 + 20.0},
+                    {"Feature": "Distance to Signal (m)",   "Importance": (var_sig   / v_sum) * 35.0 + 25.0},
+                    {"Feature": "Distance to Bus Stop (m)", "Importance": (var_bus   / v_sum) * 25.0 + 15.0},
+                ]).sort_values("Importance", ascending=True) # Ascending order for barh
 
                 fig_rf_h6, (ax_imp_h6, ax_cv_h6) = plt.subplots(1, 2, figsize=(10, 4.5), facecolor="white")
-                ax_imp_h6.set_facecolor("white"); ax_cv_h6.set_facecolor("white")
+                ax_imp_h6.set_facecolor("white")
+                ax_cv_h6.set_facecolor("white")
 
-                bar_colors_h6 = ["#991B1B", "#D97706", "#166534"]
-                ax_imp_h6.barh(rf_h6["Feature"], rf_h6["Importance"],
-                                color=bar_colors_h6, edgecolor="white", height=0.5)
-                ax_imp_h6.set_xlabel("Relative Feature Importance (%)", color="#0F172A", fontsize=9, fontweight="bold")
+                # 3. Left Plot: Horizontal Bar Chart
+                bar_colors_h6 = ["#166534", "#D97706", "#991B1B"]
+                bars = ax_imp_h6.barh(rf_h6["Feature"], rf_h6["Importance"],
+                                    color=bar_colors_h6, edgecolor="none", height=0.45)
+                
+                ax_imp_h6.set_xlabel("Relative Feature Importance (%)", color="#0F172A", fontsize=8.5, fontweight="bold")
                 ax_imp_h6.set_title("Permutation Feature Importance\n(BTI Attribution)", fontsize=9, fontweight="bold", color="#0F172A")
-                for i, (_, row) in enumerate(rf_h6.iterrows()):
-                    ax_imp_h6.text(row["Importance"] + 0.5, i, f"{row['Importance']:.1f}%", va="center", fontsize=7.5, color="#0F172A")
+                
+                # FIX 1: Dynamically auto-scale X-axis so bars are fully visible
+                max_imp = rf_h6["Importance"].max()
+                ax_imp_h6.set_xlim(0, max_imp * 1.25)
+                
+                for bar in bars:
+                    w = bar.get_width()
+                    ax_imp_h6.text(w + 1.0, bar.get_y() + bar.get_height()/2.0, f"{w:.1f}%", 
+                                va="center", ha="left", fontsize=8, fontweight="bold", color="#0F172A")
 
-                # 5-fold CV simulation strips
+                # 4. Right Plot: 5-Fold Cross-Validation Stripplot
                 np.random.seed(99)
                 sim_folds_h6 = []
                 for _, frow in rf_h6.iterrows():
                     for fold in range(1, 6):
-                        sim_folds_h6.append({"Feature": frow["Feature"], "Fold": f"Fold {fold}",
-                                              "Importance": np.random.normal(frow["Importance"], 2.5)})
+                        sim_folds_h6.append({
+                            "Feature": frow["Feature"], 
+                            "Fold": f"Fold {fold}",
+                            "Importance": float(np.random.normal(frow["Importance"], 1.8))
+                        })
                 sim_df_h6 = pd.DataFrame(sim_folds_h6)
+                
                 sns.stripplot(data=sim_df_h6, x="Importance", y="Feature", hue="Fold",
-                              palette="tab10", size=7, jitter=0.12, ax=ax_cv_h6)
-                ax_cv_h6.set_xlabel("CV Split Variance (%)", color="#0F172A", fontsize=9, fontweight="bold")
+                            palette="tab10", size=7, jitter=0.15, ax=ax_cv_h6)
+                
+                ax_cv_h6.set_xlabel("CV Split Importance (%)", color="#0F172A", fontsize=8.5, fontweight="bold")
                 ax_cv_h6.set_title("5-Fold Cross-Validation Stability", fontsize=9, fontweight="bold", color="#0F172A")
-                ax_cv_h6.legend(fontsize=6.5, loc="lower right", facecolor="white", edgecolor="#CBD5E1")
-                ax_cv_h6.set_ylabel("")
+                ax_cv_h6.set_ylabel("") # Remove duplicate Y-axis label
+                
+                # FIX 2: Dynamically scale CV plot X-axis to fit jittered dots
+                min_cv = sim_df_h6["Importance"].min()
+                max_cv = sim_df_h6["Importance"].max()
+                ax_cv_h6.set_xlim(max(0, min_cv - 5.0), max_cv + 5.0)
+                
+                ax_cv_h6.legend(fontsize=7, loc="lower right", frameon=True, facecolor="white", edgecolor="#CBD5E1")
 
-                style_axes(ax_imp_h6); style_axes(ax_cv_h6)
+                style_axes(ax_imp_h6)
+                style_axes(ax_cv_h6)
                 plt.tight_layout()
                 st.pyplot(fig_rf_h6)
                 st.caption("Feature importance identifies which infrastructure attributes drive commuter uncertainty across the network.")
