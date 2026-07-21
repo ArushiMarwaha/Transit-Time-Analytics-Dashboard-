@@ -4396,19 +4396,19 @@ def main():
             df_env_raw['lat'] = np.random.uniform(13.00, 13.15, size=len(df_env_raw))
             df_env_raw['lon'] = np.random.uniform(80.20, 80.28, size=len(df_env_raw))
         # FIX: Generate realistic diurnal AQI correlated with congestion and atmospheric trapping
-if 'indexes_aqi' not in df_env_raw.columns:
-    # 1. Base traffic emission contribution (proportional to congestion TTI)
-    traffic_aqi = (df_env_raw['travel_time_index_tti'] - 1.0).clip(lower=0) * 35.0
-    
-    # 2. Atmospheric Inversion Factor (night/early morning traps exhaust near ground, midday disperses it)
-    hour = df_env_raw['derived_hour']
-    inversion_factor = np.where((hour >= 7) & (hour <= 10), 1.4,   # Morning rush peak accumulation
-                        np.where((hour >= 17) & (hour <= 21), 1.3, # Evening rush peak accumulation
-                        np.where((hour >= 11) & (hour <= 16), 0.7, # Midday solar thermal dispersion
-                        0.5)))                                     # Late night drop
+        if 'indexes_aqi' not in df_env_raw.columns:
+            # 1. Base traffic emission contribution (proportional to congestion TTI)
+            traffic_aqi = (df_env_raw['travel_time_index_tti'] - 1.0).clip(lower=0) * 35.0
+            
+            # 2. Atmospheric Inversion Factor (night/early morning traps exhaust near ground, midday disperses it)
+            hour = df_env_raw['derived_hour']
+            inversion_factor = np.where((hour >= 7) & (hour <= 10), 1.4,   # Morning rush peak accumulation
+                                np.where((hour >= 17) & (hour <= 21), 1.3, # Evening rush peak accumulation
+                                np.where((hour >= 11) & (hour <= 16), 0.7, # Midday solar thermal dispersion
+                                0.5)))                                     # Late night drop
                         
-    # Baseline ambient background air pollution (~40 AQI) + correlated traffic spike + minimal noise
-    df_env_raw['indexes_aqi'] = 40.0 + (traffic_aqi * inversion_factor) + np.random.normal(0, 1.5, size=len(df_env_raw))
+            # Baseline ambient background air pollution (~40 AQI) + correlated traffic spike + minimal noise
+            df_env_raw['indexes_aqi'] = 40.0 + (traffic_aqi * inversion_factor) + np.random.normal(0, 1.5, size=len(df_env_raw))
         if 'wind_speed_10m' not in df_env_raw.columns:
             df_env_raw['wind_speed_10m'] = np.random.uniform(2.0, 15.0, size=len(df_env_raw))
         if 'precipitation_intensity_mm_h' not in df_env_raw.columns:
