@@ -16,6 +16,11 @@ import requests
 import io
 from datetime import date, timedelta
 from typing import Optional
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.mixture import GaussianMixture
+import plotly.express as px
+import plotly.graph_objects as go
 
 # =============================================================================
 # 0. GLOBAL GITHUB DATA REPOSITORY CONFIGURATION
