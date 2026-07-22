@@ -9,3 +9,4 @@ requests
 scipy
 scikit-learn
 anthropic
+plotly>=5.18.0
