@@ -900,16 +900,13 @@ def render_ai_assistant_chat(df: pd.DataFrame) -> None:
                 (st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else "")
                 or os.environ.get("GEMINI_API_KEY", "")
             )
-            has_anthropic = bool(
-                (st.secrets.get("ANTHROPIC_API_KEY", "") if hasattr(st, "secrets") else "")
-                or os.environ.get("ANTHROPIC_API_KEY", "")
-            )
 
             if has_gemini:
-                api_badge = (
-                    '<span style="font-size:10px; color:#34D399; font-weight:700;">'
-                    '[GEMINI 2.5: ONLINE]</span>'
-                )
+                api_badge = '<span style="font-size:10px; color:#34D399; font-weight:700;">[GEMINI 2.5: ONLINE]</span>'
+            else:
+                api_badge = '<span style="font-size:10px; color:#94A3B8; font-weight:700;">[RULE PARSER: ACTIVE]</span>'
+
+            st.markdown(f"<div style='text-align:right; margin-top:4px;'>{api_badge}</div>", unsafe_allow_html=True)
             elif has_anthropic:
                 api_badge = (
                     '<span style="font-size:10px; color:#34D399; font-weight:700;">'
