@@ -21,7 +21,8 @@ from sklearn.decomposition import PCA
 from sklearn.mixture import GaussianMixture
 import plotly.express as px
 import plotly.graph_objects as go
-
+from google import genai
+from google.genai import types
 # =============================================================================
 # 0. GLOBAL GITHUB DATA REPOSITORY CONFIGURATION
 # =============================================================================
