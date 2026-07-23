@@ -1471,33 +1471,34 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
     # (raises KeyError if missing, which is catchable and explicit), then fall
     # back to os.environ.  Using bracket access rather than .get() avoids the
     # silent None that occurs when secrets haven't initialised yet.
+    # =========================================================================
+    # TIER 1 — Google Gemini
+    # =========================================================================
     gemini_key: str | None = None
     try:
-        gemini_key = st.secrets["GEMINI_API_KEY"]          # bracket = explicit KeyError
-    except (KeyError, FileNotFoundError, AttributeError):
+        gemini_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    except Exception:
         gemini_key = os.environ.get("GEMINI_API_KEY") or None
 
     if gemini_key:
         try:
-            from google import genai as _genai
-            from google.genai import types as _gtypes
+            import google.generativeai as genai
 
-            client = _genai.Client(api_key=gemini_key)
+            genai.configure(api_key=gemini_key)
 
-            # ✅ CORRECT MODEL NAME
-            response = client.models.generate_content(
-                model="gemini-1.5-flash",  # or "gemini-2.0-flash"
-                contents=user_msg,
-                config=_gtypes.GenerateContentConfig(
-                    system_instruction=system_instruction,
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                system_instruction=system_instruction,
+            )
+
+            response = model.generate_content(
+                user_msg,
+                generation_config=genai.types.GenerationConfig(
                     temperature=0.2,
                 ),
             )
 
-            # ── Validate the response before accessing .text ─────────────────
-            # Gemini can return a non-error response that is still empty or
-            # blocked (finish_reason = SAFETY / RECITATION).  Accessing .text
-            # on a blocked response raises ValueError; check candidates first.
+            # ── Validate response safely ──────────────────────────────────
             if response is None:
                 st.toast(
                     "Gemini API Error: received None response object. "
@@ -1505,45 +1506,29 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
                     icon="⚠️",
                 )
                 st.sidebar.error(
-                    "**[Gemini Tier]** Response object was None.  "
+                    "**[Gemini Tier]** Response object was None. "
                     "Verify GEMINI_API_KEY quota at console.cloud.google.com."
                 )
-            elif (
-                not hasattr(response, "candidates")
-                or not response.candidates
-            ):
-                finish = getattr(
-                    getattr(response, "prompt_feedback", None),
-                    "block_reason", "UNKNOWN"
-                )
+            elif hasattr(response, "text") and response.text:
+                response_text = response.text.strip()
+                if response_text:
+                    # SUCCESS — return Gemini's answer
+                    return response_text, chart_cmd
+                else:
+                    st.toast(
+                        "Gemini API: model returned empty text. Falling back.",
+                        icon="⚠️",
+                    )
+            else:
                 st.toast(
-                    f"Gemini API: response blocked — reason: {finish}. "
-                    "Falling back to rule parser.",
+                    "Gemini API: response blocked or empty. Falling back.",
                     icon="⚠️",
                 )
                 st.sidebar.warning(
-                    f"**[Gemini Tier]** Response blocked (block_reason={finish}). "
-                    "This is usually a safety-filter or quota issue."
+                    "**[Gemini Tier]** Response was blocked or contained no candidates."
                 )
-            else:
-                # Safe to access .text now
-                response_text = (response.text or "").strip()
-                if not response_text:
-                    st.toast(
-                        "Gemini API: model returned an empty text body. "
-                        "Falling back to rule parser.",
-                        icon="⚠️",
-                    )
-                    st.sidebar.warning(
-                        "**[Gemini Tier]** response.text was empty after strip(). "
-                        "The model may have declined to answer."
-                    )
-                else:
-                    # SUCCESS — return Gemini's answer
-                    return response_text, chart_cmd
 
         except Exception as err:
-            # Surface the real error — never pass silently
             err_msg = str(err)
             st.toast(f"Gemini API Error: {err_msg[:200]}", icon="⚠️")
             st.sidebar.error(
