@@ -889,7 +889,7 @@ def render_ai_assistant_chat(df: pd.DataFrame) -> None:
             send_clicked = st.button("Ask", key=f"cumta_ai_send_{st.session_state.cumta_chat_input_key}", width="stretch")
 
         # ── Footer Options & Reset ──────────────────────────────────────────
-        c# ── Footer Options & Reset ──────────────────────────────────────────
+        
         clear_col, api_status_col = st.columns([1, 2])
         with clear_col:
             if st.button("Clear Chat", key="cumta_ai_clear", width="stretch"):
