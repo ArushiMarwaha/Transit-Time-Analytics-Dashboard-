@@ -1147,15 +1147,26 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
     Stateless domain-knowledge responder.
 
     Returns (text_response, chart_command | None).
-    chart_command is a string key from _DOMAIN_KB['quick_commands'] if the
-    question requests a micro-visualisation, otherwise None.
-
-    Priority order:
-      1. Anthropic Claude API (if ANTHROPIC_API_KEY is set in Streamlit secrets
-         or environment variables).
-      2. Rule-based structured parser (always available, zero dependencies).
-
     """
+    system_instruction = (
+        "You are the CUMTA Transit AI Advisor — a Senior Spatial Analytics Consultant "
+        "embedded strictly within the CUMTA Core Transit Network Diagnostics Cockpit dashboard.\n\n"
+        "STRICT FORMAT RULES & GUARDRAILS:\n"
+        "1. You MUST ONLY answer questions strictly related to this dashboard, its 10 analytical hypotheses, "
+        "   spatial transport metrics (TTI, BTI, PTI, MCBI, Lambda, AQI), and CUMTA engineering policy recommendations.\n"
+        "2. If a user asks an off-topic question, politely decline and state: "
+        "   '[GUARDRAIL] I am strictly configured to answer queries related to the CUMTA Transit Cockpit.'\n"
+        "3. Never use emojis anywhere in your response.\n"
+        "4. Use professional engineering tags: [ANALYSIS], [CHART RECOMMENDATION], [POLICY INTERVENTION], [CRITICAL], [INFO], [VERDICT], [METHODOLOGY].\n"
+        "5. When recommending a chart, tell the user exactly which tab to navigate to and which chart panel to look at.\n"
+        "6. Keep responses under 280 words unless explicitly asked for a long report.\n\n"
+        "METRIC DEFINITIONS YOU KNOW:\n"
+        + "\n".join(f"- {k}: {v[:120]}" for k, v in _DOMAIN_KB["metrics"].items())
+        + "\n\nHYPOTHESES YOU KNOW:\n"
+        + "\n".join(f"- H{n} ({v['name']}): {v['one_liner']}" for n, v in _DOMAIN_KB["hypotheses"].items())
+    )
+
+    # ── 1. Try Google Gemini API ──────────────────────────────────────────────
     gemini_key = (
         st.secrets.get("GEMINI_API_KEY", None)
         if hasattr(st, "secrets")
@@ -1173,12 +1184,43 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
                 contents=user_msg,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
-                    temperature=0.2,  # Low temperature for factual consistency
+                    temperature=0.2,
                 ),
             )
             response_text = response.text.strip()
 
-            # Detect micro-chart intent in user query
+            chart_cmd = None
+            msg_lower = user_msg.lower()
+            for trigger, cmd in _DOMAIN_KB.get("quick_commands", {}).items():
+                if trigger in msg_lower:
+                    chart_cmd = cmd
+                    break
+
+            return response_text, chart_cmd
+
+        except Exception as err:
+            # Fall through if Gemini API call fails
+            pass
+
+    # ── 2. Try Anthropic API Fallback ─────────────────────────────────────────
+    anthropic_key = (
+        st.secrets.get("ANTHROPIC_API_KEY", None)
+        if hasattr(st, "secrets")
+        else os.environ.get("ANTHROPIC_API_KEY", None)
+    )
+    if anthropic_key:
+        try:
+            import anthropic as _anthropic
+
+            client = _anthropic.Anthropic(api_key=anthropic_key)
+            message = client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=512,
+                system=system_instruction,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            response_text = message.content[0].text.strip()
+
             chart_cmd = None
             msg_lower = user_msg.lower()
             for trigger, cmd in _DOMAIN_KB.get("quick_commands", {}).items():
@@ -1189,78 +1231,21 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
             return response_text, chart_cmd
 
         except Exception:
-            pass  # Fall through to Anthropic or Rule Parser if Gemini fails
-    # ── Try Anthropic API first ─────────────────────────────────────────────
-    api_key = (
-        st.secrets.get("ANTHROPIC_API_KEY", None)
-        if hasattr(st, "secrets")
-        else os.environ.get("ANTHROPIC_API_KEY", None)
-    )
-    if api_key:
-        try:
-            import anthropic as _anthropic
+            pass
 
-            _system_prompt = (
-                "You are the CUMTA Transit AI Advisor — a Senior Spatial Analytics Consultant "
-                "embedded in the CUMTA Core Transit Network Diagnostics Cockpit dashboard.\n\n"
-                "STRICT FORMAT RULES:\n"
-                "- Never use emoji anywhere in your response.\n"
-                "- Use professional engineering tags: [ANALYSIS], [CHART RECOMMENDATION], "
-                "[POLICY INTERVENTION], [CRITICAL], [INFO], [VERDICT], [METHODOLOGY].\n"
-                "- When recommending a chart, tell the user exactly which tab to navigate to "
-                "and which chart panel to look at.\n"
-                "- Keep responses under 280 words unless the user explicitly asks for a full report.\n\n"
-                "METRIC DEFINITIONS YOU KNOW:\n"
-                + "\n".join(
-                    f"- {k}: {v[:120]}" for k, v in _DOMAIN_KB["metrics"].items()
-                )
-                + "\n\nHYPOTHESES YOU KNOW:\n"
-                + "\n".join(
-                    f"- H{n} ({v['name']}): {v['one_liner']}"
-                    for n, v in _DOMAIN_KB["hypotheses"].items()
-                )
-            )
-
-            client = _anthropic.Anthropic(api_key=api_key)
-            message = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=512,
-                system=_system_prompt,
-                messages=[{"role": "user", "content": user_msg}],
-            )
-            response_text = message.content[0].text.strip()
-
-            # Detect chart intent in the API response
-            chart_cmd = None
-            for trigger, cmd in _DOMAIN_KB["quick_commands"].items():
-                if trigger in user_msg.lower():
-                    chart_cmd = cmd
-                    break
-
-            return response_text, chart_cmd
-
-        except Exception:
-            pass  # Fall through to rule-based parser
-
-    # ── Rule-based parser fallback ──────────────────────────────────────────
+    # ── 3. Rule-Based Fallback ───────────────────────────────────────────────
     msg_lower = user_msg.lower().strip()
 
-    # 1. Chart / plot request detection
     chart_cmd = None
     for trigger, cmd in _DOMAIN_KB["quick_commands"].items():
         if trigger in msg_lower:
             chart_cmd = cmd
             break
 
-    # 2. Metric definition lookups
     for metric_key, definition in _DOMAIN_KB["metrics"].items():
         if metric_key.lower() in msg_lower or metric_key.lower().replace("_", " ") in msg_lower:
-            return (
-                f"[ANALYSIS] {metric_key} Definition\n\n{definition}",
-                chart_cmd,
-            )
+            return (f"[ANALYSIS] {metric_key} Definition\n\n{definition}", chart_cmd)
 
-    # 3. Hypothesis routing
     for hyp_num, hyp in _DOMAIN_KB["hypotheses"].items():
         if (
             f"hypothesis {hyp_num}" in msg_lower
@@ -1271,118 +1256,15 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
             return (
                 f"[ANALYSIS] Hypothesis {hyp_num}: {hyp['name']}\n\n"
                 f"{hyp['method']}\n\n"
-                f"[CHART RECOMMENDATION] Navigate to tab: '{hyp['tab']}' — "
-                f"key charts: {chart_list}.\n\n"
+                f"[CHART RECOMMENDATION] Navigate to tab: '{hyp['tab']}' — key charts: {chart_list}.\n\n"
                 f"[POLICY INTERVENTION] {hyp['action']}",
                 chart_cmd,
             )
 
-    # 4. Worst segment / bottleneck question
-    if any(t in msg_lower for t in ["worst", "bottleneck", "critical", "top", "highest tti", "most congested"]):
-        if "shapefile_segment_name" in df.columns and "travel_time_index_tti" in df.columns:
-            seg_means = (
-                df.groupby("shapefile_segment_name")["travel_time_index_tti"]
-                .mean()
-                .sort_values(ascending=False)
-            )
-            top3 = seg_means.head(3)
-            rows = "\n".join(
-                f"  {i+1}. {seg} — Mean TTI: {val:.3f}"
-                for i, (seg, val) in enumerate(top3.items())
-            )
-            return (
-                f"[ANALYSIS] Top 3 Worst-Performing Segments (by Mean TTI) in current data window:\n\n"
-                f"{rows}\n\n"
-                f"[CHART RECOMMENDATION] Navigate to 'Hypothesis 1: Systemic Bottleneck Localization' "
-                f"and review the MCBI Leaderboard for full ranked diagnostics.\n\n"
-                f"[POLICY INTERVENTION] Run a field audit at the top-ranked segment first. "
-                f"Confirm root-cause status before committing capital expenditure.",
-                "plot_worst_segments",
-            )
-        else:
-            return (
-                "[INFO] The current data window does not contain segment TTI fields. "
-                "Please broaden the aggregation horizon in the sidebar to 7-Day or 15-Day "
-                "and refresh. Then navigate to Hypothesis 1 for the full bottleneck leaderboard.",
-                None,
-            )
-
-    # 5. AQI / pollution question
-    if any(t in msg_lower for t in ["aqi", "air quality", "pollution", "emission"]):
-        h10 = _DOMAIN_KB["hypotheses"][10]
-        return (
-            f"[ANALYSIS] {h10['one_liner']}\n\n"
-            f"{h10['method']}\n\n"
-            f"[CHART RECOMMENDATION] Navigate to '{h10['tab']}' — "
-            f"review the non-linear TTI vs AQI polynomial scatter and the SHAP attribution bar chart.\n\n"
-            f"[POLICY INTERVENTION] {h10['action']}",
-            "plot_aqi_tti",
-        )
-
-    # 6. Cluster / taxonomy question
-    if any(t in msg_lower for t in ["cluster", "taxonomy", "archetype", "pca", "gmm", "segment type"]):
-        h9 = _DOMAIN_KB["hypotheses"][9]
-        return (
-            f"[ANALYSIS] {h9['one_liner']}\n\n"
-            f"{h9['method']}\n\n"
-            f"[CHART RECOMMENDATION] Navigate to '{h9['tab']}' — "
-            f"review the PCA 2D projection and Silhouette coefficient charts.\n\n"
-            f"[POLICY INTERVENTION] {h9['action']}",
-            None,
-        )
-
-    # 7. Tidal / reversible lane question
-    if any(t in msg_lower for t in ["tidal", "reversible", "directional", "asymmetr", "lambda", "inversion"]):
-        h5 = _DOMAIN_KB["hypotheses"][5]
-        return (
-            f"[ANALYSIS] {h5['one_liner']}\n\n"
-            f"{h5['method']}\n\n"
-            f"[CHART RECOMMENDATION] Navigate to '{h5['tab']}' — "
-            f"review the Lambda hourly profile and directional heatmaps.\n\n"
-            f"[POLICY INTERVENTION] {h5['action']}",
-            "plot_tti_by_hour",
-        )
-
-    # 8. Reliability / BTI / PTI question
-    if any(t in msg_lower for t in ["bti", "pti", "reliability", "unpredictable", "planning time", "buffer time"]):
-        h6 = _DOMAIN_KB["hypotheses"][6]
-        return (
-            f"[ANALYSIS] {h6['one_liner']}\n\n"
-            f"[METHODOLOGY] {h6['method']}\n\n"
-            f"[CHART RECOMMENDATION] Navigate to '{h6['tab']}' — "
-            f"review the BTI ranking bar chart and the Levene test table.\n\n"
-            f"[POLICY INTERVENTION] {h6['action']}",
-            "plot_bti_risk",
-        )
-
-    # 9. Generic help / capability question
-    if any(t in msg_lower for t in ["what can you", "help", "how do i", "explain", "what is this", "overview"]):
-        hyp_list = "\n".join(
-            f"  H{n}: {v['name']} — {v['one_liner']}"
-            for n, v in _DOMAIN_KB["hypotheses"].items()
-        )
-        metric_list = ", ".join(_DOMAIN_KB["metrics"].keys())
-        return (
-            f"[INFO] CUMTA Transit AI Advisor — Capability Overview\n\n"
-            f"I am embedded in the CUMTA Core Transit Network Diagnostics Cockpit and "
-            f"can answer questions about all 10 analytical hypotheses, interpret chart outputs, "
-            f"generate micro-visualisations from live data, and provide engineering policy recommendations.\n\n"
-            f"HYPOTHESES I KNOW:\n{hyp_list}\n\n"
-            f"METRICS I CAN EXPLAIN: {metric_list}\n\n"
-            f"QUICK MICRO-CHARTS: type 'plot TTI by hour', 'show BTI risk', 'worst segments', "
-            f"'corridor comparison', or 'AQI' to generate an inline chart from your current dataset.",
-            None,
-        )
-
-    # 10. Default structured fallback
     return (
         f"[INFO] Query received: '{user_msg[:80]}'\n\n"
         "[ANALYSIS] I could not match your query to a specific hypothesis, metric, or chart command. "
-        "Try asking about a specific metric (TTI, BTI, PTI, MCBI, Lambda, AQI), a hypothesis number "
-        "(e.g. 'explain Hypothesis 6'), or type a quick-chart command such as "
-        "'plot TTI by hour' or 'show BTI risk'.\n\n"
-        "[INFO] If you have set an ANTHROPIC_API_KEY in Streamlit Secrets, free-form natural language "
-        "queries will be answered by the Claude AI model instead of this structured parser.",
+        "Try asking about a specific metric (TTI, BTI, PTI, MCBI, Lambda, AQI) or hypothesis number (e.g. 'explain Hypothesis 6').",
         None,
     )
 
