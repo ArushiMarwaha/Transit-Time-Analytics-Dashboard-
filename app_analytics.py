@@ -1484,8 +1484,9 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
 
             client = _genai.Client(api_key=gemini_key)
 
+            # ✅ CORRECT MODEL NAME
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-1.5-flash",  # or "gemini-2.0-flash"
                 contents=user_msg,
                 config=_gtypes.GenerateContentConfig(
                     system_instruction=system_instruction,
