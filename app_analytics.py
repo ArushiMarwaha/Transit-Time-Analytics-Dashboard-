@@ -896,17 +896,31 @@ def render_ai_assistant_chat(df: pd.DataFrame) -> None:
                 st.session_state.cumta_chat_input_key += 1
                 st.rerun()
         with api_status_col:
-            has_key = bool(
+            has_gemini = bool(
+                (st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else "")
+                or os.environ.get("GEMINI_API_KEY", "")
+            )
+            has_anthropic = bool(
                 (st.secrets.get("ANTHROPIC_API_KEY", "") if hasattr(st, "secrets") else "")
                 or os.environ.get("ANTHROPIC_API_KEY", "")
             )
-            api_badge = (
-                '<span style="font-size:10px; color:#34D399; font-weight:700;">'
-                '[CLAUDE SONNET: ONLINE]</span>'
-                if has_key
-                else '<span style="font-size:10px; color:#94A3B8; font-weight:700;">'
-                '[RULE PARSER: ACTIVE]</span>'
-            )
+
+            if has_gemini:
+                api_badge = (
+                    '<span style="font-size:10px; color:#34D399; font-weight:700;">'
+                    '[GEMINI 2.5: ONLINE]</span>'
+                )
+            elif has_anthropic:
+                api_badge = (
+                    '<span style="font-size:10px; color:#34D399; font-weight:700;">'
+                    '[CLAUDE SONNET: ONLINE]</span>'
+                )
+            else:
+                api_badge = (
+                    '<span style="font-size:10px; color:#94A3B8; font-weight:700;">'
+                    '[RULE PARSER: ACTIVE]</span>'
+                )
+
             st.markdown(f"<div style='text-align:right; margin-top:4px;'>{api_badge}</div>", unsafe_allow_html=True)
 
         # ── Input Handling ───────────────────────────────────────────────────
@@ -1148,7 +1162,42 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
       1. Anthropic Claude API (if ANTHROPIC_API_KEY is set in Streamlit secrets
          or environment variables).
       2. Rule-based structured parser (always available, zero dependencies).
+
     """
+    gemini_key = (
+        st.secrets.get("GEMINI_API_KEY", None)
+        if hasattr(st, "secrets")
+        else os.environ.get("GEMINI_API_KEY", None)
+    )
+
+    if gemini_key:
+        try:
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=gemini_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=user_msg,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.2,  # Low temperature for factual consistency
+                ),
+            )
+            response_text = response.text.strip()
+
+            # Detect micro-chart intent in user query
+            chart_cmd = None
+            msg_lower = user_msg.lower()
+            for trigger, cmd in _DOMAIN_KB.get("quick_commands", {}).items():
+                if trigger in msg_lower:
+                    chart_cmd = cmd
+                    break
+
+            return response_text, chart_cmd
+
+        except Exception:
+            pass  # Fall through to Anthropic or Rule Parser if Gemini fails
     # ── Try Anthropic API first ─────────────────────────────────────────────
     api_key = (
         st.secrets.get("ANTHROPIC_API_KEY", None)

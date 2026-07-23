@@ -10,3 +10,4 @@ scipy
 scikit-learn
 anthropic
 plotly>=5.18.0
+google-genai
