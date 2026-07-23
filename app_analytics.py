@@ -943,60 +943,95 @@ def render_ai_assistant_chat(df: pd.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 # Domain knowledge base — every metric, tab, and hypothesis the AI knows
 # ---------------------------------------------------------------------------
+
+
+
+# ---------------------------------------------------------------------------
+# DOMAIN KNOWLEDGE BASE  —  expanded with proxy topics and broad keywords
+# ---------------------------------------------------------------------------
 _DOMAIN_KB: dict = {
-    # ── Metric definitions ──────────────────────────────────────────────────
+    # ── Core metric definitions ─────────────────────────────────────────────
     "metrics": {
         "TTI": (
-            "Travel Time Index — the ratio of current travel time to free-flow travel time. "
-            "TTI = 1.0 means free-flow. TTI = 2.0 means the trip takes twice as long as it would "
-            "at zero congestion. The dashboard flags TTI >= 2.2 as peak congestion and TTI >= 1.5 "
-            "as persistent off-peak congestion (used in Hypothesis 3 Quadrant classification)."
+            "Travel Time Index — ratio of current travel time to free-flow travel time. "
+            "TTI = 1.0 means free-flow. TTI = 2.0 means the trip takes twice as long as "
+            "under zero-congestion conditions. The dashboard flags TTI >= 2.2 as peak "
+            "congestion and TTI >= 1.5 as persistent off-peak congestion (Hypothesis 3 "
+            "Quadrant classification). Off-peak TTI >= 1.5 is the primary proxy for "
+            "road quality degradation and geometric capacity deficits — a road that is slow "
+            "at 3 AM cannot be blamed on demand; the problem is physical."
         ),
         "BTI": (
-            "Buffer Time Index — the extra percentage of time a commuter must add above the "
-            "mean travel time to guarantee on-time arrival 95 % of the time. "
+            "Buffer Time Index — extra percentage of time a commuter must add above the mean "
+            "travel time to guarantee on-time arrival 95% of the time. "
             "Formula: BTI = (P95(TT) - mean(TT)) / mean(TT) * 100. "
-            "BTI > 80 % is flagged as an acute reliability crisis in Hypothesis 6. "
+            "BTI > 80% is flagged as an acute reliability crisis in Hypothesis 6. "
+            "High BTI is the operational proxy for poor incident management and inadequate "
+            "clearance response — when BTI is high but median TTI is moderate, the link "
+            "suffers from infrequent but severe operational shocks (accidents, stalls). "
             "Tab: 'Hypothesis 6: Commuter Uncertainty'."
         ),
         "PTI": (
-            "Planning Time Index — the 95th-percentile travel time divided by free-flow time. "
-            "PTI = 2.5 means a traveller must plan for a trip 2.5x longer than free-flow to be "
-            "confident of on-time arrival. Closely related to BTI but expressed as an absolute "
-            "multiplier rather than a percentage premium. Tab: 'Hypothesis 6: Commuter Uncertainty'."
+            "Planning Time Index — 95th-percentile travel time divided by free-flow time. "
+            "PTI = 2.5 means a traveller must plan for a trip 2.5x longer than free-flow. "
+            "Closely related to BTI but expressed as an absolute multiplier. "
+            "Tab: 'Hypothesis 6: Commuter Uncertainty'."
         ),
         "MCBI": (
-            "Multi-Criteria Bottleneck Index — a composite priority score (0-1) combining four "
-            "sub-signals: tail severity (P90 TTI, weight 0.25), congestion frequency (0.20), "
-            "early onset hour (0.25), and verified root-cause event count (0.30). Higher MCBI = "
-            "higher engineering triage priority. Tab: 'Hypothesis 1: Systemic Bottleneck Localization'."
+            "Multi-Criteria Bottleneck Index — composite priority score (0-1) combining: "
+            "tail severity (P90 TTI, weight 0.25), congestion frequency (0.20), "
+            "early onset hour (0.25), and verified root-cause event count (0.30). "
+            "Higher MCBI = higher engineering triage priority. A high MCBI at low TTI "
+            "hours indicates incident-driven (not structural) congestion — guide incident "
+            "response teams rather than civil engineers. "
+            "Tab: 'Hypothesis 1: Systemic Bottleneck Localization'."
         ),
         "Lambda": (
-            "Directional Asymmetry Ratio (Lambda, Λ) — the ratio of median TTI in Direction A "
-            "to median TTI in Direction B at a given hour. Λ ≈ 1.0 means balanced bidirectional "
-            "flow. A tidal corridor shows Λ >= 1.8 during morning peak and Λ <= 0.55 during "
-            "evening peak (an inversion loop). Tab: 'Hypothesis 5: Tidal Flow Asymmetry'."
+            "Directional Asymmetry Ratio (Lambda, Λ) — ratio of median TTI in Direction A "
+            "to median TTI in Direction B at a given hour. Λ ≈ 1.0 = balanced. "
+            "A tidal corridor shows Λ >= 1.8 during morning peak and Λ <= 0.55 during "
+            "evening peak (inversion loop) — the primary signal for reversible lane candidacy "
+            "and asymmetric signal phasing. "
+            "Tab: 'Hypothesis 5: Tidal Flow Asymmetry'."
         ),
         "AQI": (
-            "Air Quality Index — the Google Environment API localized AQI value per segment. "
-            "Used as a supplementary congestion characterisation signal in Hypothesis 10. "
-            "High TTI + elevated AQI = high-volume traffic accumulation (vehicle idling). "
-            "High TTI + flat AQI = low-volume incident blockage (accident / stall). "
+            "Air Quality Index — Google Environment API localized AQI per segment. "
+            "Used as a supplementary congestion disambiguation signal. "
+            "High TTI + elevated AQI = high-volume vehicle idling (gridlock). "
+            "High TTI + flat AQI = low-volume incident blockage (accident/stall with few vehicles). "
+            "Low TTI + elevated AQI = external non-traffic confounder (industrial source, wind). "
+            "This 2x2 matrix separates capacity management interventions from "
+            "incident response dispatches. "
             "Tab: 'Hypothesis 10: Traffic Volume via AQI Proxy'."
         ),
         "delta_lanes": (
-            "Downstream Lane Drop Delta (DeltaLanes) — the reduction in lane count between "
-            "segment s and its downstream successor. Positive values flag geometric bottlenecks. "
-            "Used in Hypothesis 3 Quadrant I classification and OLS attribution. "
+            "Downstream Lane Drop Delta — reduction in lane count between segment s and its "
+            "downstream successor. Positive values flag geometric bottlenecks caused by "
+            "road narrowing. Primary structural variable in Hypothesis 3 OLS regression. "
             "Tab: 'Hypothesis 3: Geometric Constraints'."
         ),
         "signal_density": (
-            "Signal Node Density — a proxy computed as 1000 / nearest_signal_dist_meters. "
-            "Higher values indicate denser signal clustering within 1,000 m, which creates "
-            "cumulative intersection queues. Used in Hypothesis 3 and Hypothesis 9 clustering. "
+            "Signal Node Density — proxy computed as 1000 / nearest_signal_dist_meters. "
+            "Higher values = denser signal clustering within 1,000 m, generating cumulative "
+            "intersection queue back-pressure. Used in Hypothesis 3 and Hypothesis 9 clustering. "
             "Tab: 'Hypothesis 3: Geometric Constraints'."
         ),
+        "beta_rain": (
+            "Rain Elasticity Slope — OLS coefficient from regressing TTI on "
+            "precipitation_intensity_mm_h per segment. High positive beta_rain = the link "
+            "is weather-sensitive, often due to poor road surface drainage or inadequate "
+            "pavement texture that reduces wet-road friction. Proxy for pavement quality "
+            "and drainage infrastructure adequacy. "
+            "Tab: 'Hypothesis 4: Weather-Driven Variance'."
+        ),
+        "CV": (
+            "Coefficient of Variation (CV = sigma / mu) — standardized measure of TTI "
+            "dispersion. High CV means the road is erratic and unpredictable even when "
+            "average speed is acceptable. Used in Hypothesis 9 clustering and Hypothesis 6 "
+            "reliability diagnostics."
+        ),
     },
+
     # ── Hypothesis summaries ────────────────────────────────────────────────
     "hypotheses": {
         1: {
@@ -1005,56 +1040,122 @@ _DOMAIN_KB: dict = {
             "one_liner": "Identifies true root-cause congestion nodes vs. spillover/victim segments using MCBI scoring.",
             "method": (
                 "Each segment's TTI is compared to its own P90 threshold. A segment earns "
-                "'Confirmed root cause' only if it is congested while its upstream neighbor is clear, "
-                "the congestion persists to the next interval, and this pattern repeats >= 2 times. "
-                "Spillover/victim segments are congested simultaneously with their upstream neighbor. "
-                "MCBI composite score weights P90 severity, frequency, onset hour, and root-cause events."
+                "'Confirmed root cause' only if it is congested while its upstream neighbor "
+                "is clear, congestion persists to the next interval, and this repeats >= 2 times. "
+                "Spillover segments are congested simultaneously with their upstream neighbor. "
+                "MCBI weights P90 severity, frequency, onset hour, and root-cause event count. "
+                "ACCIDENTS AND INCIDENTS: A cluster of root-cause flags at a single node with "
+                "irregular timing (not repeating at the same hour daily) is the strongest "
+                "signal for incident-driven rather than structural congestion."
             ),
             "charts": ["MCBI Leaderboard bar chart", "Folium map with segment status markers", "Spillover vs Root-Cause pie"],
-            "action": "Send engineering crews to Confirmed root-cause segments first. Do not redesign victim segments.",
+            "action": (
+                "Send engineering crews to Confirmed root-cause segments first. "
+                "Do not redesign victim/spillover segments — they will self-correct once the "
+                "upstream root cause is resolved. Incident-pattern nodes need response team "
+                "staging rather than civil reconstruction."
+            ),
+            "proxy_topics": ["accident", "incident", "crash", "root cause", "spillover", "bottleneck", "mcbi"],
         },
         2: {
             "name": "Temporal Peak Profiling",
             "tab": "Hypothesis 2: Temporal Peak Profiling",
             "one_liner": "Builds diurnal TTI profiles to isolate peak windows and quantify demand-side congestion intensity.",
-            "method": "Groups TTI by hour and day-type (weekday vs weekend). Wilcoxon tests confirm whether peak-hour TTI is significantly higher than off-peak.",
+            "method": (
+                "Groups TTI by hour and day-type. Wilcoxon tests confirm whether peak TTI "
+                "is significantly higher than off-peak. "
+                "SIGNAL TIMING: If peak-hour TTI is significantly elevated but off-peak is "
+                "clean, the problem is signal cycle length mismatch — too-long red phases "
+                "during peak demand create unnecessary queue build-up. "
+                "This hypothesis identifies the exact hour windows to target for signal retiming."
+            ),
             "charts": ["Hourly TTI box plots", "Weekday vs weekend profile overlay", "Peak corridor heatmap"],
-            "action": "Target signal retiming and demand management at the specific peak hour windows confirmed by Wilcoxon p < 0.05.",
+            "action": (
+                "Target signal retiming at the specific peak hour windows confirmed by Wilcoxon "
+                "p < 0.05. Intersections with clean off-peak profiles but severe peak spikes "
+                "are prime candidates for adaptive SCATS/SCOOT coordination rollouts."
+            ),
+            "proxy_topics": ["signal timing", "signal cycle", "intersection", "peak hour", "rush hour", "diurnal", "green phase", "scats", "scoot"],
         },
         3: {
             "name": "Geometric Constraints & Structural Choke Points",
             "tab": "Hypothesis 3: Geometric Constraints",
             "one_liner": "Separates persistent structural deficits (Q-I) from temporal demand spikes (Q-II) using a 2D behavioral dispersion matrix.",
             "method": (
-                "Off-peak TTI (23:00-05:00) vs peak TTI (08-10, 17-20) places each segment into one of three quadrants. "
-                "Q-I: off-peak >= 1.5 AND peak >= 2.2 = fails under zero demand = geometry is the constraint. "
-                "Q-II: off-peak < 1.5, peak >= 2.2 = only breaks at rush hour = demand management can fix it. "
-                "Q-III: peak TTI < 2.2 = nominal. OLS + Random Forest identify which features drive Q-I delay."
+                "Off-peak TTI (23:00-05:00) vs peak TTI (08-10, 17-20) places each segment "
+                "into one of three quadrants. "
+                "Q-I: off-peak TTI >= 1.5 AND peak TTI >= 2.2 = fails under zero demand = "
+                "geometry or road quality is the constraint, not traffic volume. "
+                "Q-II: off-peak < 1.5, peak >= 2.2 = only breaks at rush hour = "
+                "demand management can fix it. "
+                "OLS regression + Random Forest identify which physical features drive Q-I delay: "
+                "lane drops, signal density, bus-stop friction. "
+                "ROAD QUALITY PROXY: Q-I segments (slow even at 3 AM) are the strongest "
+                "available signal for pavement degradation, geometric capacity deficits, "
+                "and poor road surface drainage — conditions that reduce speed regardless "
+                "of traffic volume."
             ),
             "charts": ["2D Structural Dispersion scatter", "PDP signal proximity curve", "Lane-drop delta bar", "Mann-Whitney test table"],
-            "action": "Q-I segments need capital civil intervention. Q-II segments need signal retiming or bus bay relocation.",
+            "action": (
+                "Q-I segments need capital civil intervention: pavement resurfacing audit, "
+                "lane widening feasibility, bus bay recessing, and signal spacing review. "
+                "Q-II segments need signal retiming or demand-side management only. "
+                "Never spend capital on Q-II without first ruling out Q-I geometry deficits."
+            ),
+            "proxy_topics": [
+                "road quality", "pavement", "road surface", "road condition", "pothole",
+                "lane drop", "geometry", "structural", "road design", "capacity", "width",
+                "bus stop", "bus bay", "geometric constraint", "physical infrastructure",
+                "road degradation", "roughness", "infrastructure quality",
+            ],
         },
         4: {
             "name": "Weather-Driven Variance",
             "tab": "Hypothesis 4: Weather-Driven Variance",
             "one_liner": "Quantifies how precipitation and wind modulate TTI, separating weather-sensitive links from structurally fragile ones.",
-            "method": "OLS regression of TTI on precipitation_intensity and wind_speed_10m. Rain elasticity slope (beta_rain) saved per segment as weather vulnerability score.",
+            "method": (
+                "OLS regression of TTI on precipitation_intensity and wind_speed_10m. "
+                "Rain elasticity slope (beta_rain) saved per segment as weather vulnerability score. "
+                "DRAINAGE PROXY: High beta_rain = road surface loses traction rapidly under rain "
+                "= poor pavement texture or inadequate drainage channels. These segments need "
+                "surface treatment (chip seal, micro-surfacing) or stormwater drainage upgrades "
+                "before monsoon season, not just traffic management."
+            ),
             "charts": ["Precipitation vs TTI scatter + regression line", "Wind speed breakpoint chart", "Weather sensitivity ranking"],
-            "action": "High beta_rain segments need drainage infrastructure investment before monsoon season.",
+            "action": (
+                "High beta_rain segments need drainage infrastructure investment and "
+                "pavement surface texture audit before monsoon season. "
+                "Cross-reference with Hypothesis 3 Q-I classification — a segment that is "
+                "both Q-I and high-beta_rain has a compounded structural + weather deficit "
+                "requiring priority capital allocation."
+            ),
+            "proxy_topics": ["rain", "weather", "monsoon", "precipitation", "flooding", "drainage", "wet road", "visibility", "wind"],
         },
         5: {
             "name": "Tidal Flow Asymmetry",
             "tab": "Hypothesis 5: Tidal Flow Asymmetry",
             "one_liner": "Detects morning-inbound / evening-outbound directional imbalances that justify reversible lane investment.",
             "method": (
-                "Shapiro-Wilk test on D_t = X_t - Y_t (AM TTI minus PM TTI). If non-normal (p < 0.05), "
-                "Wilcoxon Signed-Rank Test determines whether directional median TTI differs significantly (p < 0.01). "
-                "Tidal Split Coefficient Lambda = Median(TTI_directionA_h) / Median(TTI_directionB_h). "
-                "Inversion Loop: Lambda >= 1.8 AM and <= 0.55 PM confirms reversible lane candidacy. "
-                "KS Test across weekly blocks confirms structural stability."
+                "Shapiro-Wilk test on D_t = X_t - Y_t. If non-normal, Wilcoxon Signed-Rank "
+                "determines whether directional median TTI differs significantly (p < 0.01). "
+                "Lambda = Median(TTI_A_h) / Median(TTI_B_h). "
+                "INTERSECTION / SIGNAL RELEVANCE: Tidal corridors with high Lambda ratios "
+                "are prime candidates for asymmetric green-time phasing — giving more green "
+                "time to the dominant inbound direction during AM peak and reversing allocation "
+                "during PM peak. KS Test across weekly blocks confirms stability."
             ),
             "charts": ["Lambda hourly profile per corridor", "Direction A vs Direction B heatmaps", "Tidal ratio registry table"],
-            "action": "Inversion Loop + no fixed barrier = reversible lane with automated bollards. Fixed barrier = asymmetric signal phasing.",
+            "action": (
+                "Lambda >= 1.8 AM + no fixed median barrier = reversible lane with automated bollards. "
+                "Lambda >= 1.8 AM + fixed barrier = asymmetric signal green-time phasing. "
+                "Stable pattern (KS p > 0.05) = capital investment is justified. "
+                "Unstable pattern = dynamic monitoring only, hold capital."
+            ),
+            "proxy_topics": [
+                "reversible lane", "tidal", "directional", "asymmetry", "lambda",
+                "inversion", "inbound", "outbound", "northbound", "southbound",
+                "signal timing", "green time", "signal phase", "intersection",
+            ],
         },
         6: {
             "name": "Commuter Uncertainty & Travel Time Predictability",
@@ -1063,38 +1164,56 @@ _DOMAIN_KB: dict = {
             "method": (
                 "IQR outlier cleansing removes incident spikes above P75 + 1.5*IQR. "
                 "BTI = (P95 - mean) / mean * 100. PTI = P95 / free_flow. "
-                "Heteroscedastic OLS: ln(sigma^2) ~ ln(TTI) + signal_dist. Beta1 > 0 = non-linear uncertainty. "
-                "Levene's Test across three weekly blocks confirms whether variance is structural (p > 0.05)."
+                "Heteroscedastic OLS: ln(sigma^2) ~ ln(TTI) + signal_dist. "
+                "INCIDENT MANAGEMENT PROXY: High BTI with moderate median TTI = the link "
+                "suffers infrequent but severe operational shocks. These are not structural "
+                "problems — they need incident response team staging, rapid clearance protocols, "
+                "and variable message signs (VMS) for real-time commuter guidance. "
+                "Levene's Test confirms whether variance is a permanent structural trait "
+                "(p > 0.05 = structural, capital fix) or transient (p < 0.05 = operational fix)."
             ),
             "charts": ["BTI ranking horizontal bar", "Heteroscedastic OLS scatter", "PDP signal proximity vs BTI", "Levene test table"],
-            "action": "BTI >= 80%: deploy incident response staging. Structural Levene: capital widening. Transient Levene: dynamic monitoring.",
+            "action": (
+                "BTI >= 80%: deploy incident response staging teams within 500 m. "
+                "Structural Levene result: capital widening or lane addition. "
+                "Transient Levene result: dynamic monitoring + incident clearance SLA enforcement. "
+                "High BTI + low median TTI: pure operational/incident management problem."
+            ),
+            "proxy_topics": [
+                "incident management", "accident management", "clearance", "vms",
+                "variable message", "unpredictable", "reliability", "planning time",
+                "buffer time", "bti", "pti", "uncertainty", "erratic",
+            ],
         },
         7: {
             "name": "Flyover Exit Gradients",
             "tab": "Hypothesis 7: The Flyover Exit & Gradients",
             "one_liner": "Tests whether elevated flyover ramp exits generate systematic post-descent speed decay.",
-            "method": "Compares TTI distributions between network_layer_type = 'Flyover' segments and At-Grade segments using Mann-Whitney U test.",
+            "method": "Compares TTI between network_layer_type = 'Flyover' and At-Grade segments using Mann-Whitney U test.",
             "charts": ["Flyover vs At-Grade TTI distribution", "Ramp exit proximity curve"],
             "action": "Significant post-flyover speed decay: install merge advisory signage and consider ramp metering.",
+            "proxy_topics": ["flyover", "ramp", "elevated", "descent", "overpass", "merge", "ramp metering"],
         },
         8: {
             "name": "Spatial Length Dilution Bias",
             "tab": "Hypothesis 8: Spatial Length Dilution Bias",
-            "one_liner": "Detects whether longer GIS segments artificially average out peak congestion, masking micro-bottlenecks.",
-            "method": "Correlation between segment_length_meters and coefficient of variation of TTI. Long segments with low CV = dilution bias.",
+            "one_liner": "Detects whether longer GIS segments average out peak congestion, masking micro-bottlenecks.",
+            "method": "Correlation between segment_length_meters and CV of TTI. Long segments with low CV = dilution bias.",
             "charts": ["Segment length vs CV scatter", "Length-stratified TTI distribution"],
-            "action": "Segment GIS links > 800 m in high-CV corridors into finer-grained micro-segments for accurate diagnostics.",
+            "action": "Segment GIS links > 800 m in high-CV corridors into finer micro-segments for accurate diagnostics.",
+            "proxy_topics": ["segment length", "gis", "dilution", "micro-segment", "spatial resolution", "averaging"],
         },
         9: {
             "name": "Unsupervised Taxonomy Clustering",
             "tab": "Hypothesis 9: Unsupervised Taxonomy Clustering",
             "one_liner": "Groups all segments into four behavioral archetypes using PCA + K-Means + GMM for standardized capital policy templates.",
             "method": (
-                "Multi-feature matrix (mean peak TTI, off-peak TTI, P95 TTI, BTI, CV, Net Asymmetry Index, "
-                "rain elasticity, signal density, lane drop delta) Z-score normalized. Pearson collinearity pruning (rho >= 0.85). "
-                "PCA retains >= 85% variance. K-Means++ + Agglomerative Hierarchical clustering. "
-                "GMM soft clustering flags boundary segments. Silhouette Coefficient + Davies-Bouldin Index. "
-                "Bootstrap ARI >= 0.82 confirms stability. SHAP values explain individual assignments."
+                "Multi-feature matrix (mean peak TTI, off-peak TTI, P95, BTI, CV, "
+                "Net Asymmetry Index, rain elasticity, signal density, lane drop delta) "
+                "Z-score normalized. Pearson collinearity pruning (rho >= 0.85). "
+                "PCA retains >= 85% variance. K-Means++ + Agglomerative Hierarchical. "
+                "GMM soft clustering flags boundary segments. Silhouette + Davies-Bouldin. "
+                "Bootstrap ARI >= 0.82 confirms stability. SHAP explains individual assignments."
             ),
             "charts": ["PCA 2D projection scatter", "Silhouette coefficient bar", "Bootstrap ARI distribution", "SHAP beeswarm"],
             "action": (
@@ -1103,170 +1222,487 @@ _DOMAIN_KB: dict = {
                 "Cluster C (Climate-Vulnerable) = stormwater drainage. "
                 "Cluster D (Tidal Commuter) = reversible lanes."
             ),
+            "proxy_topics": ["cluster", "taxonomy", "archetype", "pca", "gmm", "segment type", "policy template", "group"],
         },
         10: {
             "name": "Traffic Volume via AQI Proxy",
             "tab": "Hypothesis 10: Traffic Volume via AQI Proxy",
-            "one_liner": "Uses localized AQI as a supplementary congestion disambiguation signal, controlling for wind and precipitation.",
+            "one_liner": "Uses localized AQI as a supplementary congestion disambiguation signal after controlling for wind and precipitation.",
             "method": (
-                "Cross-Correlation Function (CCF) at lags k = {0,1,2,3} hours identifies the optimal "
-                "temporal lag between TTI and AQI. OLS: AQI(t+k) ~ TTI + wind_speed + precipitation + hour. "
-                "Beta1 significant (p < 0.01) = traffic is a verified AQI driver after atmospheric controls. "
-                "SHAP values isolate traffic contribution vs. weather contribution. "
-                "Temporal holdout MAPE < 8% validates model for production use."
+                "Cross-Correlation Function (CCF) at lags k = {0,1,2,3} hours identifies "
+                "optimal temporal lag between TTI and AQI. "
+                "OLS: AQI(t+k) ~ TTI + wind_speed + precipitation + hour. "
+                "Beta1 significant (p < 0.01) = traffic is a verified AQI driver. "
+                "INCIDENT DISAMBIGUATION: High TTI + flat AQI = few vehicles but a blockage "
+                "(stall, accident, debris) — dispatch incident response, not transit management. "
+                "High TTI + elevated AQI = genuine high-volume idling — needs capacity relief. "
+                "SHAP isolates traffic vs weather contribution. MAPE < 8% validates model."
             ),
             "charts": ["TTI vs AQI scatter with non-linear polynomial fit", "SHAP bar chart", "Model validation observed vs forecast"],
             "action": (
-                "High TTI + high AQI = transit capacity management. "
+                "High TTI + high AQI = transit capacity management (dedicated bus lanes, park-and-ride). "
                 "High TTI + flat AQI = incident response team dispatch. "
-                "Low TTI + high AQI = industrial emissions audit."
+                "Low TTI + high AQI = industrial emissions audit (non-traffic source). "
+                "Low TTI + flat AQI = healthy corridor, baseline monitoring only."
+            ),
+            "proxy_topics": [
+                "aqi", "air quality", "pollution", "emission", "idling", "exhaust",
+                "particulate", "no2", "pm25", "incident", "accident", "stall",
+                "disambiguate", "vehicle count",
+            ],
+        },
+    },
+
+    # ── Broad proxy-topic keyword routing ──────────────────────────────────
+    # Maps free-form topic phrases to the most relevant hypotheses and a
+    # short advisory response template.  Used by the expanded rule-based
+    # fallback to handle queries that don't exactly match a metric name.
+    "proxy_topics": {
+        "road quality": {
+            "hypotheses": [3, 4],
+            "summary": (
+                "Road quality is not measured directly in this dashboard, but two proxy "
+                "signals are highly correlated with pavement and geometric degradation:\n"
+                "1. Off-peak TTI (Hypothesis 3) — a link that is slow at 3 AM cannot be "
+                "blamed on demand. Q-I classification (off-peak TTI >= 1.5) is the "
+                "strongest available indicator of physical road capacity deficits: lane drops, "
+                "poor geometry, or surface roughness reducing free-flow speed.\n"
+                "2. Rain Elasticity / beta_rain (Hypothesis 4) — segments where TTI spikes "
+                "sharply under precipitation likely have poor pavement texture or inadequate "
+                "drainage channels. High beta_rain is a proxy for surface quality deficiency."
+            ),
+            "chart_recommendation": (
+                "Navigate to 'Hypothesis 3: Geometric Constraints' and review the 2D Structural "
+                "Dispersion Matrix. Segments in Quadrant I (top-right) are your road quality "
+                "priority list. Cross-reference with 'Hypothesis 4: Weather-Driven Variance' — "
+                "the weather sensitivity ranking identifies links where wet-road friction loss "
+                "compounds the geometric problem."
+            ),
+            "action": (
+                "Commission a physical pavement condition survey (PCI scoring) for all Q-I "
+                "segments. High beta_rain segments should receive surface texture audits and "
+                "stormwater drainage upgrades before the next monsoon season."
+            ),
+        },
+        "incident management": {
+            "hypotheses": [1, 6, 10],
+            "summary": (
+                "Incident management quality is evaluated through three proxy signals:\n"
+                "1. MCBI root-cause events (Hypothesis 1) — non-repeating congestion spikes "
+                "at the same node that don't align with the network's usual peak pattern "
+                "indicate incident-driven rather than structural congestion.\n"
+                "2. BTI (Hypothesis 6) — high BTI with moderate median TTI means infrequent "
+                "but severe shocks are inflating the 95th percentile. The gap between P95 "
+                "and mean is the incident management performance gap.\n"
+                "3. AQI disambiguation (Hypothesis 10) — high TTI + flat AQI is the strongest "
+                "signal for a low-volume physical blockage (accident, stalled vehicle) rather "
+                "than genuine high-density gridlock."
+            ),
+            "chart_recommendation": (
+                "Start at 'Hypothesis 1: Systemic Bottleneck Localization' and look at the "
+                "Spillover vs Root-Cause pie and the MCBI leaderboard for segments with "
+                "irregular (non-peak) root-cause events. Then check 'Hypothesis 6: Commuter "
+                "Uncertainty' for the BTI ranking — segments with BTI >= 80% but moderate "
+                "median TTI are your incident clearance priority nodes."
+            ),
+            "action": (
+                "Stage rapid-response incident clearance units within 500 m of high-BTI "
+                "non-structural segments. Enforce clearance SLA of <= 12 minutes for "
+                "secondary incidents on these links. Deploy variable message signs (VMS) "
+                "for real-time commuter re-routing."
+            ),
+        },
+        "signal timing": {
+            "hypotheses": [2, 3, 5],
+            "summary": (
+                "Signal timing optimization opportunities are identified across three hypotheses:\n"
+                "1. Peak profiling (Hypothesis 2) — exact hour windows where TTI spikes "
+                "significantly (Wilcoxon p < 0.05) tell you precisely when to extend green "
+                "phases on the dominant arterial.\n"
+                "2. Signal density (Hypothesis 3) — the partial dependence plot shows the "
+                "distance threshold below which clustered signals generate queue back-pressure "
+                "even under moderate demand. This is your SCATS coordination zone boundary.\n"
+                "3. Tidal flow (Hypothesis 5) — corridors with Lambda >= 1.8 in AM peak "
+                "need asymmetric green-time allocation (more green for the inbound direction "
+                "in morning, reversed in evening)."
+            ),
+            "chart_recommendation": (
+                "Navigate to 'Hypothesis 2: Temporal Peak Profiling' and identify the exact "
+                "hours with statistically confirmed peak spikes. Then go to 'Hypothesis 3: "
+                "Geometric Constraints' and review the PDP signal-proximity curve to find the "
+                "queue back-pressure boundary. Finally check 'Hypothesis 5: Tidal Flow "
+                "Asymmetry' for the Lambda hourly profile to assess green-time reallocation needs."
+            ),
+            "action": (
+                "Implement time-of-day signal plans using confirmed peak windows from H2. "
+                "Roll out SCATS/SCOOT coordination within the signal density radius identified "
+                "in H3 PDP. Apply asymmetric phasing on Lambda >= 1.5 corridors from H5."
+            ),
+        },
+        "accidents": {
+            "hypotheses": [1, 6, 10],
+            "summary": (
+                "The dashboard provides three accident and incident-related diagnostic signals:\n"
+                "1. Root-cause vs spillover classification (Hypothesis 1) — irregular "
+                "non-repeating congestion patterns at a node are incident signatures.\n"
+                "2. BTI gap analysis (Hypothesis 6) — the P95 vs mean gap quantifies how "
+                "much accidents are inflating worst-case travel times above the structural baseline.\n"
+                "3. AQI disambiguation (Hypothesis 10) — high TTI + low AQI = physical blockage "
+                "with few vehicles = accident or stall. This is the clearest signal available "
+                "for distinguishing accident-driven delay from volume-driven gridlock."
+            ),
+            "chart_recommendation": (
+                "Navigate to 'Hypothesis 10: Traffic Volume via AQI Proxy' and review the "
+                "TTI vs AQI scatter plot. Points in the high-TTI / flat-AQI quadrant are your "
+                "likely accident/incident locations. Cross-reference with 'Hypothesis 1' to "
+                "confirm whether those nodes show irregular root-cause timing patterns."
+            ),
+            "action": (
+                "Dispatch incident response teams to high-TTI / flat-AQI nodes. "
+                "Stage clearance equipment at the BTI >= 80% segments identified in H6. "
+                "Install CCTV at H1 root-cause nodes with irregular congestion patterns "
+                "for real-time incident detection."
+            ),
+        },
+        "reversible lanes": {
+            "hypotheses": [5, 9],
+            "summary": (
+                "Reversible lane candidacy is determined primarily by Hypothesis 5 (Tidal "
+                "Flow Asymmetry). A corridor qualifies when: Lambda >= 1.8 during morning "
+                "peak AND Lambda <= 0.55 during evening peak (inversion loop), confirmed "
+                "by Wilcoxon p < 0.01, with stable week-over-week pattern (KS p > 0.05). "
+                "Hypothesis 9 cluster D (Tidal Commuter archetype) consolidates all such "
+                "corridors into a single capital expenditure policy group."
+            ),
+            "chart_recommendation": (
+                "Navigate to 'Hypothesis 5: Tidal Flow Asymmetry' and review the Lambda "
+                "hourly profile and tidal ratio registry. Then check 'Hypothesis 9: "
+                "Unsupervised Taxonomy Clustering' — Cluster D segments are your reversible "
+                "lane priority list."
+            ),
+            "action": (
+                "No fixed median barrier: install dynamic reversible lane with automated "
+                "bollard system. Fixed median barrier present: implement asymmetric signal "
+                "green-time phasing instead. Confirm structural stability (KS p > 0.05) "
+                "before committing capital."
             ),
         },
     },
-    # ── Quick command dispatch ──────────────────────────────────────────────
+
+    # ── Quick chart command dispatch ────────────────────────────────────────
     "quick_commands": {
-        "plot tti": "plot_tti_by_hour",
-        "show tti": "plot_tti_by_hour",
-        "tti by hour": "plot_tti_by_hour",
-        "diurnal": "plot_tti_by_hour",
-        "bti risk": "plot_bti_risk",
-        "buffer time": "plot_bti_risk",
-        "worst segments": "plot_worst_segments",
-        "top 10": "plot_worst_segments",
-        "top 5": "plot_worst_segments",
-        "corridor comparison": "plot_corridor_compare",
-        "compare corridors": "plot_corridor_compare",
-        "aqi": "plot_aqi_tti",
-        "air quality": "plot_aqi_tti",
-        "pollution": "plot_aqi_tti",
+        "plot tti":          "plot_tti_by_hour",
+        "show tti":          "plot_tti_by_hour",
+        "tti by hour":       "plot_tti_by_hour",
+        "diurnal":           "plot_tti_by_hour",
+        "hourly profile":    "plot_tti_by_hour",
+        "bti risk":          "plot_bti_risk",
+        "buffer time":       "plot_bti_risk",
+        "show bti":          "plot_bti_risk",
+        "reliability":       "plot_bti_risk",
+        "worst segments":    "plot_worst_segments",
+        "top 10":            "plot_worst_segments",
+        "top 5":             "plot_worst_segments",
+        "worst performers":  "plot_worst_segments",
+        "most congested":    "plot_worst_segments",
+        "corridor comparison":  "plot_corridor_compare",
+        "compare corridors":    "plot_corridor_compare",
+        "corridor ranking":     "plot_corridor_compare",
+        "aqi":               "plot_aqi_tti",
+        "air quality":       "plot_aqi_tti",
+        "pollution":         "plot_aqi_tti",
+        "emission":          "plot_aqi_tti",
     },
 }
 
 
+# ---------------------------------------------------------------------------
+# AI RESPONSE BUILDER  —  Gemini primary, Anthropic secondary, rule fallback
+# ---------------------------------------------------------------------------
 def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None]:
     """
-    Stateless domain-knowledge responder.
+    Two-tier AI responder with full error surfacing.
 
-    Returns (text_response, chart_command | None).
+    Priority:
+      1. Google Gemini (gemini-2.5-flash) via st.secrets["GEMINI_API_KEY"]
+      2. Anthropic Claude (claude-sonnet-4-6) via st.secrets["ANTHROPIC_API_KEY"]
+      3. Expanded rule-based domain-knowledge parser (always available)
+
+    API failures are surfaced via st.toast() so they are visible during
+    development and do NOT silently mask misconfigured secrets.
+
+    Returns (response_text, chart_cmd | None).
     """
+    # Build the full system instruction from the live knowledge base so it
+    # stays in sync with any _DOMAIN_KB edits automatically.
+    metric_lines = "\n".join(
+        f"  - {k}: {v[:160]}" for k, v in _DOMAIN_KB["metrics"].items()
+    )
+    hyp_lines = "\n".join(
+        f"  - H{n} ({v['name']}): {v['one_liner']}"
+        for n, v in _DOMAIN_KB["hypotheses"].items()
+    )
+    proxy_lines = "\n".join(
+        f"  - '{topic}': {info['summary'][:120]}"
+        for topic, info in _DOMAIN_KB["proxy_topics"].items()
+    )
+
     system_instruction = (
         "You are the CUMTA Transit AI Advisor — a Senior Spatial Analytics Consultant "
-        "embedded strictly within the CUMTA Core Transit Network Diagnostics Cockpit dashboard.\n\n"
-        "STRICT FORMAT RULES & GUARDRAILS:\n"
-        "1. You MUST ONLY answer questions strictly related to this dashboard, its 10 analytical hypotheses, "
-        "   spatial transport metrics (TTI, BTI, PTI, MCBI, Lambda, AQI), and CUMTA engineering policy recommendations.\n"
-        "2. If a user asks an off-topic question, politely decline and state: "
-        "   '[GUARDRAIL] I am strictly configured to answer queries related to the CUMTA Transit Cockpit.'\n"
-        "3. Never use emojis anywhere in your response.\n"
-        "4. Use professional engineering tags: [ANALYSIS], [CHART RECOMMENDATION], [POLICY INTERVENTION], [CRITICAL], [INFO], [VERDICT], [METHODOLOGY].\n"
-        "5. When recommending a chart, tell the user exactly which tab to navigate to and which chart panel to look at.\n"
-        "6. Keep responses under 280 words unless explicitly asked for a long report.\n\n"
-        "METRIC DEFINITIONS YOU KNOW:\n"
-        + "\n".join(f"- {k}: {v[:120]}" for k, v in _DOMAIN_KB["metrics"].items())
-        + "\n\nHYPOTHESES YOU KNOW:\n"
-        + "\n".join(f"- H{n} ({v['name']}): {v['one_liner']}" for n, v in _DOMAIN_KB["hypotheses"].items())
+        "embedded in the CUMTA Core Transit Network Diagnostics Cockpit dashboard.\n\n"
+
+        "SCOPE RULES:\n"
+        "1. Your PRIMARY role is answering questions about this dashboard's 10 analytical "
+        "   hypotheses and its transport metrics (TTI, BTI, PTI, MCBI, Lambda, AQI, "
+        "   beta_rain, CV, delta_lanes).\n"
+        "2. You also handle BROADER transport engineering questions (road quality, pavement, "
+        "   signal timing, incident management, accidents, drainage, reversible lanes) by "
+        "   explaining which dashboard metrics act as the best available proxy for topics "
+        "   the dashboard does not measure directly. For example:\n"
+        "     - Road quality / pavement degradation -> Hypothesis 3 off-peak TTI (Q-I) and "
+        "       Hypothesis 4 rain elasticity (beta_rain).\n"
+        "     - Incident management performance -> Hypothesis 1 MCBI root-cause events, "
+        "       Hypothesis 6 BTI gap analysis, and Hypothesis 10 AQI disambiguation.\n"
+        "     - Signal timing optimization -> Hypothesis 2 peak profiling, Hypothesis 3 "
+        "       signal density PDP, and Hypothesis 5 tidal Lambda ratios.\n"
+        "3. If a question has absolutely no connection to transport, roads, or urban planning, "
+        "   politely decline: '[GUARDRAIL] This query is outside the CUMTA Transit Cockpit scope.'\n"
+        "4. Never refuse a transport engineering question just because the dashboard does "
+        "   not have a direct metric for it — always explain the best proxy approach.\n\n"
+
+        "FORMAT RULES:\n"
+        "- Never use emojis anywhere.\n"
+        "- Use tags: [ANALYSIS], [CHART RECOMMENDATION], [POLICY INTERVENTION], "
+        "  [CRITICAL], [INFO], [VERDICT], [METHODOLOGY], [PROXY METRIC].\n"
+        "- Always name the exact tab and chart panel when recommending a visualization.\n"
+        "- Keep responses under 300 words unless the user explicitly asks for a full report.\n\n"
+
+        f"METRIC DEFINITIONS:\n{metric_lines}\n\n"
+        f"HYPOTHESES:\n{hyp_lines}\n\n"
+        f"PROXY TOPIC MAPPINGS (for broader transport queries):\n{proxy_lines}"
     )
 
-    # ── 1. Try Google Gemini API ──────────────────────────────────────────────
-    gemini_key = (
-        st.secrets.get("GEMINI_API_KEY", None)
-        if hasattr(st, "secrets")
-        else os.environ.get("GEMINI_API_KEY", None)
-    )
+    msg_lower = user_msg.lower().strip()
+
+    # ── Detect chart command from user message (used by all tiers) ──────────
+    chart_cmd: str | None = None
+    for trigger, cmd in _DOMAIN_KB["quick_commands"].items():
+        if trigger in msg_lower:
+            chart_cmd = cmd
+            break
+
+    # ── Tier 1: Google Gemini ────────────────────────────────────────────────
+    gemini_key: str | None = None
+    try:
+        gemini_key = st.secrets["GEMINI_API_KEY"]
+    except (KeyError, AttributeError, FileNotFoundError):
+        gemini_key = os.environ.get("GEMINI_API_KEY", None)
 
     if gemini_key:
         try:
-            from google import genai
-            from google.genai import types
+            from google import genai as _genai
+            from google.genai import types as _gtypes
 
-            client = genai.Client(api_key=gemini_key)
+            client = _genai.Client(api_key=gemini_key)
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=user_msg,
-                config=types.GenerateContentConfig(
+                config=_gtypes.GenerateContentConfig(
                     system_instruction=system_instruction,
                     temperature=0.2,
                 ),
             )
-            response_text = response.text.strip()
 
-            chart_cmd = None
-            msg_lower = user_msg.lower()
-            for trigger, cmd in _DOMAIN_KB.get("quick_commands", {}).items():
-                if trigger in msg_lower:
-                    chart_cmd = cmd
-                    break
-
-            return response_text, chart_cmd
+            # Explicit validation — surface empty / blocked responses
+            if not response or not response.text or not response.text.strip():
+                st.toast(
+                    "[Gemini API] Response was empty or blocked by safety filters. "
+                    "Falling back to rule-based parser.",
+                    icon="⚠️",
+                )
+            else:
+                return response.text.strip(), chart_cmd
 
         except Exception as err:
-            # Fall through if Gemini API call fails
-            pass
+            # Surface the real exception — never silently swallow it
+            err_str = str(err)
+            st.toast(f"[Gemini API Error] {err_str[:160]}", icon="⚠️")
+            st.sidebar.error(
+                f"**Gemini API Error** (falling back to rule-based parser):\n\n`{err_str}`"
+            )
+            # Fall through to Anthropic tier
 
-    # ── 2. Try Anthropic API Fallback ─────────────────────────────────────────
-    anthropic_key = (
-        st.secrets.get("ANTHROPIC_API_KEY", None)
-        if hasattr(st, "secrets")
-        else os.environ.get("ANTHROPIC_API_KEY", None)
-    )
+    # ── Tier 2: Anthropic Claude fallback ───────────────────────────────────
+    anthropic_key: str | None = None
+    try:
+        anthropic_key = st.secrets["ANTHROPIC_API_KEY"]
+    except (KeyError, AttributeError, FileNotFoundError):
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", None)
+
     if anthropic_key:
         try:
             import anthropic as _anthropic
 
             client = _anthropic.Anthropic(api_key=anthropic_key)
             message = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=512,
+                model="claude-sonnet-4-6",
+                max_tokens=600,
                 system=system_instruction,
                 messages=[{"role": "user", "content": user_msg}],
             )
-            response_text = message.content[0].text.strip()
 
-            chart_cmd = None
-            msg_lower = user_msg.lower()
-            for trigger, cmd in _DOMAIN_KB.get("quick_commands", {}).items():
-                if trigger in msg_lower:
-                    chart_cmd = cmd
-                    break
+            if not message or not message.content:
+                st.toast(
+                    "[Anthropic API] Empty response received. Falling back to rule-based parser.",
+                    icon="⚠️",
+                )
+            else:
+                return message.content[0].text.strip(), chart_cmd
 
-            return response_text, chart_cmd
+        except Exception as err:
+            err_str = str(err)
+            st.toast(f"[Anthropic API Error] {err_str[:160]}", icon="⚠️")
+            st.sidebar.error(
+                f"**Anthropic API Error** (falling back to rule-based parser):\n\n`{err_str}`"
+            )
+            # Fall through to rule-based parser
 
-        except Exception:
-            pass
+    # ── Tier 3: Expanded rule-based parser ──────────────────────────────────
+    # Attempts five matching passes in priority order.
+    # Never returns a generic rejection for transport-adjacent queries.
 
-    # ── 3. Rule-Based Fallback ───────────────────────────────────────────────
-    msg_lower = user_msg.lower().strip()
-
-    chart_cmd = None
-    for trigger, cmd in _DOMAIN_KB["quick_commands"].items():
-        if trigger in msg_lower:
-            chart_cmd = cmd
-            break
-
+    # Pass 1 — Exact metric name match
     for metric_key, definition in _DOMAIN_KB["metrics"].items():
         if metric_key.lower() in msg_lower or metric_key.lower().replace("_", " ") in msg_lower:
-            return (f"[ANALYSIS] {metric_key} Definition\n\n{definition}", chart_cmd)
+            return (
+                f"[ANALYSIS] {metric_key} — Definition and Dashboard Role\n\n"
+                f"{definition}",
+                chart_cmd,
+            )
 
+    # Pass 2 — Hypothesis number or name match
     for hyp_num, hyp in _DOMAIN_KB["hypotheses"].items():
+        name_fragment = hyp["name"].lower()[:14]
         if (
             f"hypothesis {hyp_num}" in msg_lower
             or f"h{hyp_num}" in msg_lower
-            or hyp["name"].lower()[:12] in msg_lower
+            or name_fragment in msg_lower
         ):
             chart_list = " | ".join(hyp["charts"])
             return (
                 f"[ANALYSIS] Hypothesis {hyp_num}: {hyp['name']}\n\n"
-                f"{hyp['method']}\n\n"
-                f"[CHART RECOMMENDATION] Navigate to tab: '{hyp['tab']}' — key charts: {chart_list}.\n\n"
+                f"[METHODOLOGY] {hyp['method']}\n\n"
+                f"[CHART RECOMMENDATION] Navigate to tab: '{hyp['tab']}' — "
+                f"key charts: {chart_list}.\n\n"
                 f"[POLICY INTERVENTION] {hyp['action']}",
                 chart_cmd,
             )
 
+    # Pass 3 — Proxy keyword match across hypothesis proxy_topics lists
+    matched_hyps = []
+    for hyp_num, hyp in _DOMAIN_KB["hypotheses"].items():
+        for kw in hyp.get("proxy_topics", []):
+            if kw in msg_lower:
+                matched_hyps.append(hyp_num)
+                break
+
+    if matched_hyps:
+        # Build a combined response from all matched hypotheses
+        parts = []
+        for hyp_num in matched_hyps[:3]:   # cap at 3 to keep response concise
+            hyp = _DOMAIN_KB["hypotheses"][hyp_num]
+            parts.append(
+                f"[CHART RECOMMENDATION] H{hyp_num} — '{hyp['tab']}': "
+                f"{' | '.join(hyp['charts'][:2])}.\n"
+                f"[POLICY INTERVENTION] {hyp['action']}"
+            )
+        combined = "\n\n".join(parts)
+        return (
+            f"[ANALYSIS] Your query touches a topic covered by "
+            f"{len(matched_hyps)} diagnostic module(s).\n\n" + combined,
+            chart_cmd,
+        )
+
+    # Pass 4 — Broad proxy topic match from _DOMAIN_KB["proxy_topics"]
+    for topic_key, topic_info in _DOMAIN_KB["proxy_topics"].items():
+        topic_words = topic_key.replace("_", " ").split()
+        if any(word in msg_lower for word in topic_words):
+            related_hyps = ", ".join(
+                f"H{n} ({_DOMAIN_KB['hypotheses'][n]['name']})"
+                for n in topic_info["hypotheses"]
+            )
+            return (
+                f"[PROXY METRIC] '{topic_key.title()}' is not directly measured, "
+                f"but the following hypotheses provide the strongest proxy signals: "
+                f"{related_hyps}.\n\n"
+                f"[ANALYSIS] {topic_info['summary']}\n\n"
+                f"[CHART RECOMMENDATION] {topic_info['chart_recommendation']}\n\n"
+                f"[POLICY INTERVENTION] {topic_info['action']}",
+                chart_cmd,
+            )
+
+    # Pass 5 — Live-data worst-segment summary (always available from df)
+    if any(t in msg_lower for t in ["worst", "critical", "top", "highest", "most"]):
+        if "shapefile_segment_name" in df.columns and "travel_time_index_tti" in df.columns:
+            top3 = (
+                df.groupby("shapefile_segment_name")["travel_time_index_tti"]
+                .mean()
+                .sort_values(ascending=False)
+                .head(3)
+            )
+            rows = "\n".join(
+                f"  {i+1}. {seg} — Mean TTI: {val:.3f}"
+                for i, (seg, val) in enumerate(top3.items())
+            )
+            return (
+                f"[ANALYSIS] Top 3 Worst-Performing Segments (current data window):\n\n"
+                f"{rows}\n\n"
+                f"[CHART RECOMMENDATION] Navigate to 'Hypothesis 1: Systemic Bottleneck "
+                f"Localization' and review the MCBI Leaderboard for the full ranked "
+                f"root-cause vs spillover classification.\n\n"
+                f"[POLICY INTERVENTION] Dispatch engineering assessment to the top-ranked "
+                f"segment. Confirm root-cause status before committing capital expenditure — "
+                f"victim/spillover segments will self-correct once the upstream node is fixed.",
+                "plot_worst_segments",
+            )
+
+    # Pass 6 — Helpful guidance fallback (never a flat rejection)
+    # Analyse query tokens to suggest the most likely relevant module
+    transport_hints = {
+        "speed":      "Hypothesis 2 (Temporal Peak Profiling) and Hypothesis 3 (Geometric Constraints)",
+        "delay":      "Hypothesis 1 (Bottleneck Localization) and Hypothesis 6 (Commuter Uncertainty)",
+        "travel time":"Hypothesis 6 (BTI/PTI) and Hypothesis 2 (Peak Profiling)",
+        "capacity":   "Hypothesis 3 (Geometric Constraints) and Hypothesis 9 (Clustering Policy)",
+        "lane":       "Hypothesis 3 (Lane Drop Delta) and Hypothesis 5 (Tidal Flow)",
+        "bus":        "Hypothesis 3 (Bus Friction Index) and Hypothesis 5 (Tidal Flow)",
+        "monsoon":    "Hypothesis 4 (Weather-Driven Variance) and Hypothesis 3 (Geometric Constraints)",
+        "policy":     "Hypothesis 9 (Unsupervised Taxonomy) for consolidated capital investment templates",
+        "investment": "Hypothesis 9 (Clustering) for capital expenditure policy archetypes",
+        "data":       "Dataset Overview tab for raw data inspection and filtering options",
+    }
+    hint_str = ""
+    for kw, module in transport_hints.items():
+        if kw in msg_lower:
+            hint_str = f"\n\n[INFO] Based on your query, the most relevant starting point is: {module}."
+            break
+
+    quick_cmds_str = ", ".join(f"'{k}'" for k in list(_DOMAIN_KB["quick_commands"].keys())[:8])
     return (
-        f"[INFO] Query received: '{user_msg[:80]}'\n\n"
-        "[ANALYSIS] I could not match your query to a specific hypothesis, metric, or chart command. "
-        "Try asking about a specific metric (TTI, BTI, PTI, MCBI, Lambda, AQI) or hypothesis number (e.g. 'explain Hypothesis 6').",
-        None,
+        f"[INFO] Query received: '{user_msg[:90]}'\n\n"
+        f"[ANALYSIS] I could not locate an exact metric or hypothesis match for this query. "
+        f"However, the CUMTA dashboard can likely address your question through proxy metrics "
+        f"available across its 10 diagnostic modules.\n"
+        f"{hint_str}\n\n"
+        f"Suggested approaches:\n"
+        f"  - Ask about a specific metric: TTI, BTI, PTI, MCBI, Lambda, AQI, beta_rain, CV\n"
+        f"  - Ask about a hypothesis by number: 'Explain Hypothesis 3' or 'H6'\n"
+        f"  - Ask about a transport topic: 'road quality', 'signal timing', "
+        f"'incident management', 'accidents', 'reversible lanes'\n"
+        f"  - Generate an inline chart: {quick_cmds_str}\n\n"
+        f"[INFO] To enable natural-language free-form queries, add GEMINI_API_KEY to "
+        f".streamlit/secrets.toml. The Gemini API badge at the bottom of this panel "
+        f"will confirm when it is active.",
+        chart_cmd,
     )
 
 
