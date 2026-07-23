@@ -1421,20 +1421,12 @@ _DOMAIN_KB: dict = {
 # ---------------------------------------------------------------------------
 def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None]:
     """
-    Two-tier AI responder with full error surfacing.
+    Three-tier AI responder: Gemini → Anthropic → rule-based parser.
 
-    Priority:
-      1. Google Gemini (gemini-2.5-flash) via st.secrets["GEMINI_API_KEY"]
-      2. Anthropic Claude (claude-sonnet-4-6) via st.secrets["ANTHROPIC_API_KEY"]
-      3. Expanded rule-based domain-knowledge parser (always available)
-
-    API failures are surfaced via st.toast() so they are visible during
-    development and do NOT silently mask misconfigured secrets.
-
-    Returns (response_text, chart_cmd | None).
+    Every failure is surfaced immediately via st.toast() and st.sidebar.error()
+    so no error is ever swallowed silently.  Returns (response_text, chart_cmd|None).
     """
-    # Build the full system instruction from the live knowledge base so it
-    # stays in sync with any _DOMAIN_KB edits automatically.
+    # ── Build system instruction from live knowledge base ────────────────────
     metric_lines = "\n".join(
         f"  - {k}: {v[:160]}" for k, v in _DOMAIN_KB["metrics"].items()
     )
@@ -1442,61 +1434,48 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
         f"  - H{n} ({v['name']}): {v['one_liner']}"
         for n, v in _DOMAIN_KB["hypotheses"].items()
     )
-    proxy_lines = "\n".join(
-        f"  - '{topic}': {info['summary'][:120]}"
-        for topic, info in _DOMAIN_KB["proxy_topics"].items()
-    )
-
     system_instruction = (
         "You are the CUMTA Transit AI Advisor — a Senior Spatial Analytics Consultant "
-        "embedded in the CUMTA Core Transit Network Diagnostics Cockpit dashboard.\n\n"
-
-        "SCOPE RULES:\n"
-        "1. Your PRIMARY role is answering questions about this dashboard's 10 analytical "
-        "   hypotheses and its transport metrics (TTI, BTI, PTI, MCBI, Lambda, AQI, "
-        "   beta_rain, CV, delta_lanes).\n"
-        "2. You also handle BROADER transport engineering questions (road quality, pavement, "
-        "   signal timing, incident management, accidents, drainage, reversible lanes) by "
-        "   explaining which dashboard metrics act as the best available proxy for topics "
-        "   the dashboard does not measure directly. For example:\n"
-        "     - Road quality / pavement degradation -> Hypothesis 3 off-peak TTI (Q-I) and "
-        "       Hypothesis 4 rain elasticity (beta_rain).\n"
-        "     - Incident management performance -> Hypothesis 1 MCBI root-cause events, "
-        "       Hypothesis 6 BTI gap analysis, and Hypothesis 10 AQI disambiguation.\n"
-        "     - Signal timing optimization -> Hypothesis 2 peak profiling, Hypothesis 3 "
-        "       signal density PDP, and Hypothesis 5 tidal Lambda ratios.\n"
-        "3. If a question has absolutely no connection to transport, roads, or urban planning, "
-        "   politely decline: '[GUARDRAIL] This query is outside the CUMTA Transit Cockpit scope.'\n"
-        "4. Never refuse a transport engineering question just because the dashboard does "
-        "   not have a direct metric for it — always explain the best proxy approach.\n\n"
-
-        "FORMAT RULES:\n"
-        "- Never use emojis anywhere.\n"
-        "- Use tags: [ANALYSIS], [CHART RECOMMENDATION], [POLICY INTERVENTION], "
-        "  [CRITICAL], [INFO], [VERDICT], [METHODOLOGY], [PROXY METRIC].\n"
-        "- Always name the exact tab and chart panel when recommending a visualization.\n"
-        "- Keep responses under 300 words unless the user explicitly asks for a full report.\n\n"
-
+        "embedded within the CUMTA Core Transit Network Diagnostics Cockpit.\n\n"
+        "GUARDRAIL RULES (enforce strictly):\n"
+        "1. You MUST ONLY answer questions related to this dashboard, its 10 analytical "
+        "   hypotheses, transport metrics (TTI, BTI, PTI, MCBI, Lambda, AQI), road "
+        "   engineering, signal timing, incident management, pavement quality, or "
+        "   urban transport planning.\n"
+        "2. If a user asks a completely off-topic question (e.g. 'how to make cake', "
+        "   'write me a poem', 'what is the stock price of X'), you MUST respond with "
+        "   exactly this prefix and nothing else beyond a polite one-line decline:\n"
+        "   '[GUARDRAIL] I am strictly configured to answer queries related to the "
+        "   CUMTA Transit Cockpit. Please ask a transport or dashboard-related question.'\n"
+        "3. Never use emojis anywhere in your response.\n"
+        "4. Always use professional engineering tags: [ANALYSIS], [CHART RECOMMENDATION], "
+        "   [POLICY INTERVENTION], [CRITICAL], [INFO], [VERDICT], [METHODOLOGY].\n"
+        "5. When recommending a chart, state the exact tab name and chart panel.\n"
+        "6. Keep responses under 300 words unless explicitly asked for a full report.\n\n"
         f"METRIC DEFINITIONS:\n{metric_lines}\n\n"
-        f"HYPOTHESES:\n{hyp_lines}\n\n"
-        f"PROXY TOPIC MAPPINGS (for broader transport queries):\n{proxy_lines}"
+        f"HYPOTHESES:\n{hyp_lines}"
     )
 
+    # ── Detect chart command regardless of which tier responds ───────────────
     msg_lower = user_msg.lower().strip()
-
-    # ── Detect chart command from user message (used by all tiers) ──────────
     chart_cmd: str | None = None
-    for trigger, cmd in _DOMAIN_KB["quick_commands"].items():
+    for trigger, cmd in _DOMAIN_KB.get("quick_commands", {}).items():
         if trigger in msg_lower:
             chart_cmd = cmd
             break
 
-    # ── Tier 1: Google Gemini ────────────────────────────────────────────────
+    # =========================================================================
+    # TIER 1 — Google Gemini (gemini-2.5-flash)
+    # =========================================================================
+    # Key retrieval: try st.secrets["GEMINI_API_KEY"] with bracket access first
+    # (raises KeyError if missing, which is catchable and explicit), then fall
+    # back to os.environ.  Using bracket access rather than .get() avoids the
+    # silent None that occurs when secrets haven't initialised yet.
     gemini_key: str | None = None
     try:
-        gemini_key = st.secrets["GEMINI_API_KEY"]
-    except (KeyError, AttributeError, FileNotFoundError):
-        gemini_key = os.environ.get("GEMINI_API_KEY", None)
+        gemini_key = st.secrets["GEMINI_API_KEY"]          # bracket = explicit KeyError
+    except (KeyError, FileNotFoundError, AttributeError):
+        gemini_key = os.environ.get("GEMINI_API_KEY") or None
 
     if gemini_key:
         try:
@@ -1504,6 +1483,7 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
             from google.genai import types as _gtypes
 
             client = _genai.Client(api_key=gemini_key)
+
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=user_msg,
@@ -1513,31 +1493,74 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
                 ),
             )
 
-            # Explicit validation — surface empty / blocked responses
-            if not response or not response.text or not response.text.strip():
+            # ── Validate the response before accessing .text ─────────────────
+            # Gemini can return a non-error response that is still empty or
+            # blocked (finish_reason = SAFETY / RECITATION).  Accessing .text
+            # on a blocked response raises ValueError; check candidates first.
+            if response is None:
                 st.toast(
-                    "[Gemini API] Response was empty or blocked by safety filters. "
-                    "Falling back to rule-based parser.",
+                    "Gemini API Error: received None response object. "
+                    "Check your API key quota and network connectivity.",
                     icon="⚠️",
                 )
+                st.sidebar.error(
+                    "**[Gemini Tier]** Response object was None.  "
+                    "Verify GEMINI_API_KEY quota at console.cloud.google.com."
+                )
+            elif (
+                not hasattr(response, "candidates")
+                or not response.candidates
+            ):
+                finish = getattr(
+                    getattr(response, "prompt_feedback", None),
+                    "block_reason", "UNKNOWN"
+                )
+                st.toast(
+                    f"Gemini API: response blocked — reason: {finish}. "
+                    "Falling back to rule parser.",
+                    icon="⚠️",
+                )
+                st.sidebar.warning(
+                    f"**[Gemini Tier]** Response blocked (block_reason={finish}). "
+                    "This is usually a safety-filter or quota issue."
+                )
             else:
-                return response.text.strip(), chart_cmd
+                # Safe to access .text now
+                response_text = (response.text or "").strip()
+                if not response_text:
+                    st.toast(
+                        "Gemini API: model returned an empty text body. "
+                        "Falling back to rule parser.",
+                        icon="⚠️",
+                    )
+                    st.sidebar.warning(
+                        "**[Gemini Tier]** response.text was empty after strip(). "
+                        "The model may have declined to answer."
+                    )
+                else:
+                    # SUCCESS — return Gemini's answer
+                    return response_text, chart_cmd
 
         except Exception as err:
-            # Surface the real exception — never silently swallow it
-            err_str = str(err)
-            st.toast(f"[Gemini API Error] {err_str[:160]}", icon="⚠️")
+            # Surface the real error — never pass silently
+            err_msg = str(err)
+            st.toast(f"Gemini API Error: {err_msg[:200]}", icon="⚠️")
             st.sidebar.error(
-                f"**Gemini API Error** (falling back to rule-based parser):\n\n`{err_str}`"
+                f"**[Gemini Tier — Exception]**\n\n"
+                f"Type: `{type(err).__name__}`\n\n"
+                f"Detail: `{err_msg}`\n\n"
+                "Falling back to Anthropic / rule-based parser."
             )
-            # Fall through to Anthropic tier
+            # Fall through to Tier 2
 
-    # ── Tier 2: Anthropic Claude fallback ───────────────────────────────────
+    # =========================================================================
+    # TIER 2 — Anthropic Claude (claude-sonnet-4-6) — secondary fallback
+    # =========================================================================
     anthropic_key: str | None = None
     try:
         anthropic_key = st.secrets["ANTHROPIC_API_KEY"]
-    except (KeyError, AttributeError, FileNotFoundError):
-        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", None)
+    except (KeyError, FileNotFoundError, AttributeError):
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY") or None
 
     if anthropic_key:
         try:
@@ -1553,40 +1576,43 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
 
             if not message or not message.content:
                 st.toast(
-                    "[Anthropic API] Empty response received. Falling back to rule-based parser.",
+                    "Anthropic API: empty response received. "
+                    "Falling back to rule parser.",
                     icon="⚠️",
                 )
             else:
                 return message.content[0].text.strip(), chart_cmd
 
         except Exception as err:
-            err_str = str(err)
-            st.toast(f"[Anthropic API Error] {err_str[:160]}", icon="⚠️")
+            err_msg = str(err)
+            st.toast(f"Anthropic API Error: {err_msg[:200]}", icon="⚠️")
             st.sidebar.error(
-                f"**Anthropic API Error** (falling back to rule-based parser):\n\n`{err_str}`"
+                f"**[Anthropic Tier — Exception]**\n\n"
+                f"Type: `{type(err).__name__}`\n\n"
+                f"Detail: `{err_msg}`\n\n"
+                "Falling back to rule-based parser."
             )
-            # Fall through to rule-based parser
+            # Fall through to Tier 3
 
-    # ── Tier 3: Expanded rule-based parser ──────────────────────────────────
-    # Attempts five matching passes in priority order.
-    # Never returns a generic rejection for transport-adjacent queries.
-
-    # Pass 1 — Exact metric name match
+    # =========================================================================
+    # TIER 3 — Rule-based domain-knowledge parser (always available)
+    # =========================================================================
+    # Pass 1 — exact metric key match
     for metric_key, definition in _DOMAIN_KB["metrics"].items():
-        if metric_key.lower() in msg_lower or metric_key.lower().replace("_", " ") in msg_lower:
+        aliases = [metric_key.lower(), metric_key.lower().replace("_", " ")]
+        if any(a in msg_lower for a in aliases):
             return (
-                f"[ANALYSIS] {metric_key} — Definition and Dashboard Role\n\n"
-                f"{definition}",
+                f"[ANALYSIS] {metric_key} — Definition and Dashboard Role\n\n{definition}",
                 chart_cmd,
             )
 
-    # Pass 2 — Hypothesis number or name match
+    # Pass 2 — hypothesis number or name match
     for hyp_num, hyp in _DOMAIN_KB["hypotheses"].items():
-        name_fragment = hyp["name"].lower()[:14]
+        name_frag = hyp["name"].lower()[:14]
         if (
             f"hypothesis {hyp_num}" in msg_lower
             or f"h{hyp_num}" in msg_lower
-            or name_fragment in msg_lower
+            or name_frag in msg_lower
         ):
             chart_list = " | ".join(hyp["charts"])
             return (
@@ -1598,51 +1624,47 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
                 chart_cmd,
             )
 
-    # Pass 3 — Proxy keyword match across hypothesis proxy_topics lists
-    matched_hyps = []
+    # Pass 3 — hypothesis proxy_topics keyword match
+    matched_hyps: list[int] = []
     for hyp_num, hyp in _DOMAIN_KB["hypotheses"].items():
         for kw in hyp.get("proxy_topics", []):
             if kw in msg_lower:
                 matched_hyps.append(hyp_num)
                 break
-
     if matched_hyps:
-        # Build a combined response from all matched hypotheses
         parts = []
-        for hyp_num in matched_hyps[:3]:   # cap at 3 to keep response concise
+        for hyp_num in matched_hyps[:3]:
             hyp = _DOMAIN_KB["hypotheses"][hyp_num]
             parts.append(
                 f"[CHART RECOMMENDATION] H{hyp_num} — '{hyp['tab']}': "
                 f"{' | '.join(hyp['charts'][:2])}.\n"
                 f"[POLICY INTERVENTION] {hyp['action']}"
             )
-        combined = "\n\n".join(parts)
         return (
-            f"[ANALYSIS] Your query touches a topic covered by "
-            f"{len(matched_hyps)} diagnostic module(s).\n\n" + combined,
+            f"[ANALYSIS] Your query matches {len(matched_hyps)} diagnostic module(s).\n\n"
+            + "\n\n".join(parts),
             chart_cmd,
         )
 
-    # Pass 4 — Broad proxy topic match from _DOMAIN_KB["proxy_topics"]
-    for topic_key, topic_info in _DOMAIN_KB["proxy_topics"].items():
+    # Pass 4 — broad proxy_topics dict match
+    for topic_key, topic_info in _DOMAIN_KB.get("proxy_topics", {}).items():
         topic_words = topic_key.replace("_", " ").split()
-        if any(word in msg_lower for word in topic_words):
-            related_hyps = ", ".join(
+        if any(w in msg_lower for w in topic_words):
+            related = ", ".join(
                 f"H{n} ({_DOMAIN_KB['hypotheses'][n]['name']})"
                 for n in topic_info["hypotheses"]
             )
             return (
-                f"[PROXY METRIC] '{topic_key.title()}' is not directly measured, "
-                f"but the following hypotheses provide the strongest proxy signals: "
-                f"{related_hyps}.\n\n"
+                f"[PROXY METRIC] '{topic_key.title()}' is not directly measured — "
+                f"closest proxy hypotheses: {related}.\n\n"
                 f"[ANALYSIS] {topic_info['summary']}\n\n"
                 f"[CHART RECOMMENDATION] {topic_info['chart_recommendation']}\n\n"
                 f"[POLICY INTERVENTION] {topic_info['action']}",
                 chart_cmd,
             )
 
-    # Pass 5 — Live-data worst-segment summary (always available from df)
-    if any(t in msg_lower for t in ["worst", "critical", "top", "highest", "most"]):
+    # Pass 5 — live data worst-segment lookup
+    if any(t in msg_lower for t in ["worst", "critical", "top", "highest", "most congested"]):
         if "shapefile_segment_name" in df.columns and "travel_time_index_tti" in df.columns:
             top3 = (
                 df.groupby("shapefile_segment_name")["travel_time_index_tti"]
@@ -1658,50 +1680,60 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
                 f"[ANALYSIS] Top 3 Worst-Performing Segments (current data window):\n\n"
                 f"{rows}\n\n"
                 f"[CHART RECOMMENDATION] Navigate to 'Hypothesis 1: Systemic Bottleneck "
-                f"Localization' and review the MCBI Leaderboard for the full ranked "
-                f"root-cause vs spillover classification.\n\n"
-                f"[POLICY INTERVENTION] Dispatch engineering assessment to the top-ranked "
-                f"segment. Confirm root-cause status before committing capital expenditure — "
-                f"victim/spillover segments will self-correct once the upstream node is fixed.",
+                f"Localization' — MCBI Leaderboard for full ranked root-cause classification.\n\n"
+                f"[POLICY INTERVENTION] Dispatch assessment to the top-ranked segment first. "
+                f"Confirm root-cause status before committing capital — spillover segments "
+                f"self-correct once the upstream node is resolved.",
                 "plot_worst_segments",
             )
 
-    # Pass 6 — Helpful guidance fallback (never a flat rejection)
-    # Analyse query tokens to suggest the most likely relevant module
+    # Pass 6 — guardrail check for clearly off-topic queries
+    off_topic_signals = [
+        "recipe", "cake", "cook", "poem", "song", "movie", "weather forecast",
+        "stock price", "cryptocurrency", "sports score", "joke", "translate",
+        "write an essay", "tell me a story",
+    ]
+    if any(sig in msg_lower for sig in off_topic_signals):
+        return (
+            "[GUARDRAIL] I am strictly configured to answer queries related to the "
+            "CUMTA Transit Cockpit. Please ask a transport or dashboard-related question.",
+            None,
+        )
+
+    # Pass 7 — helpful guidance fallback (never a flat rejection)
     transport_hints = {
-        "speed":      "Hypothesis 2 (Temporal Peak Profiling) and Hypothesis 3 (Geometric Constraints)",
-        "delay":      "Hypothesis 1 (Bottleneck Localization) and Hypothesis 6 (Commuter Uncertainty)",
-        "travel time":"Hypothesis 6 (BTI/PTI) and Hypothesis 2 (Peak Profiling)",
-        "capacity":   "Hypothesis 3 (Geometric Constraints) and Hypothesis 9 (Clustering Policy)",
-        "lane":       "Hypothesis 3 (Lane Drop Delta) and Hypothesis 5 (Tidal Flow)",
-        "bus":        "Hypothesis 3 (Bus Friction Index) and Hypothesis 5 (Tidal Flow)",
-        "monsoon":    "Hypothesis 4 (Weather-Driven Variance) and Hypothesis 3 (Geometric Constraints)",
-        "policy":     "Hypothesis 9 (Unsupervised Taxonomy) for consolidated capital investment templates",
-        "investment": "Hypothesis 9 (Clustering) for capital expenditure policy archetypes",
-        "data":       "Dataset Overview tab for raw data inspection and filtering options",
+        "speed":       "Hypothesis 2 (Temporal Peak Profiling) and Hypothesis 3 (Geometric Constraints)",
+        "delay":       "Hypothesis 1 (Bottleneck Localization) and Hypothesis 6 (Commuter Uncertainty)",
+        "travel time": "Hypothesis 6 (BTI/PTI) and Hypothesis 2 (Peak Profiling)",
+        "capacity":    "Hypothesis 3 (Geometric Constraints) and Hypothesis 9 (Clustering Policy)",
+        "lane":        "Hypothesis 3 (Lane Drop Delta) and Hypothesis 5 (Tidal Flow)",
+        "bus":         "Hypothesis 3 (Bus Friction Index) and Hypothesis 5 (Tidal Flow)",
+        "monsoon":     "Hypothesis 4 (Weather Variance) and Hypothesis 3 (Geometric Constraints)",
+        "policy":      "Hypothesis 9 (Taxonomy Clustering) for capital investment archetypes",
+        "investment":  "Hypothesis 9 (Clustering) for capital expenditure policy templates",
     }
-    hint_str = ""
+    hint = ""
     for kw, module in transport_hints.items():
         if kw in msg_lower:
-            hint_str = f"\n\n[INFO] Based on your query, the most relevant starting point is: {module}."
+            hint = f"\n\n[INFO] Most likely relevant module: {module}."
             break
 
-    quick_cmds_str = ", ".join(f"'{k}'" for k in list(_DOMAIN_KB["quick_commands"].keys())[:8])
+    quick_examples = ", ".join(
+        f"'{k}'" for k in list(_DOMAIN_KB["quick_commands"].keys())[:6]
+    )
     return (
-        f"[INFO] Query received: '{user_msg[:90]}'\n\n"
-        f"[ANALYSIS] I could not locate an exact metric or hypothesis match for this query. "
-        f"However, the CUMTA dashboard can likely address your question through proxy metrics "
-        f"available across its 10 diagnostic modules.\n"
-        f"{hint_str}\n\n"
-        f"Suggested approaches:\n"
-        f"  - Ask about a specific metric: TTI, BTI, PTI, MCBI, Lambda, AQI, beta_rain, CV\n"
-        f"  - Ask about a hypothesis by number: 'Explain Hypothesis 3' or 'H6'\n"
-        f"  - Ask about a transport topic: 'road quality', 'signal timing', "
-        f"'incident management', 'accidents', 'reversible lanes'\n"
-        f"  - Generate an inline chart: {quick_cmds_str}\n\n"
-        f"[INFO] To enable natural-language free-form queries, add GEMINI_API_KEY to "
-        f".streamlit/secrets.toml. The Gemini API badge at the bottom of this panel "
-        f"will confirm when it is active.",
+        f"[INFO] Query: '{user_msg[:90]}'\n\n"
+        f"[ANALYSIS] No exact metric, hypothesis, or proxy topic match found. "
+        f"The CUMTA dashboard can likely address your question through one of its "
+        f"10 diagnostic modules.{hint}\n\n"
+        f"Try one of these approaches:\n"
+        f"  - Metric name: TTI, BTI, PTI, MCBI, Lambda, AQI, beta_rain, CV\n"
+        f"  - Hypothesis number: 'Explain Hypothesis 3' or 'H6'\n"
+        f"  - Transport topic: 'road quality', 'signal timing', 'incident management', "
+        f"'accidents', 'reversible lanes'\n"
+        f"  - Inline chart: {quick_examples}\n\n"
+        f"[INFO] If GEMINI_API_KEY is set in .streamlit/secrets.toml and the badge "
+        f"above still shows RULE PARSER, check the sidebar for a Gemini API error message.",
         chart_cmd,
     )
 
