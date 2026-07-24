@@ -16,7 +16,7 @@ import requests
 import io
 from datetime import date, timedelta
 from typing import Optional
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.decomposition import PCA
 from sklearn.mixture import GaussianMixture
 import plotly.express as px
@@ -6399,27 +6399,49 @@ def main():
                     has_scipy_h10 = False
 
                 if has_scipy_h10:
-                    baseline_mask = tti_vals <= 1.5
-                    base0 = float(np.median(aqi_vals[baseline_mask])) if baseline_mask.sum() >= 3 else float(np.percentile(aqi_vals, 25))
-                    amp0 = max(float(np.percentile(aqi_vals, 90) - base0), 5.0)
-                    robust_scale = max(float(np.median(np.abs(aqi_vals - np.median(aqi_vals)))) * 1.4826, 1.0)
+                    # ── Pre-scale TTI (X) and AQI (Y) to [0, 1]. The softplus exponential
+                    # term is extremely scale-sensitive in raw units — a tiny change in k
+                    # produces enormous exp() swings, which was collapsing the optimizer
+                    # onto a flat line at the initial baseline guess instead of climbing
+                    # the gradient (the AQI≈50 flatline). Fitting in normalized space keeps
+                    # the exponential argument well-conditioned. ──
+                    x_scaler_h10 = MinMaxScaler()
+                    y_scaler_h10 = MinMaxScaler()
+                    tti_scaled = x_scaler_h10.fit_transform(tti_vals.reshape(-1, 1)).flatten()
+                    aqi_scaled = y_scaler_h10.fit_transform(aqi_vals.reshape(-1, 1)).flatten()
+                    inflection_scaled_h10 = float(x_scaler_h10.transform([[inflection_tti]])[0, 0])
 
-                    def _resid(params):
-                        return _softplus_response(params, tti_vals) - aqi_vals
+                    def _softplus_scaled(params, x_s, c=inflection_scaled_h10):
+                        base, amp, k = params
+                        z = np.clip(k * (x_s - c), -50, 50)
+                        return base + amp * np.log1p(np.exp(z))
+
+                    def _resid_scaled(params):
+                        return _softplus_scaled(params, tti_scaled) - aqi_scaled
+
+                    scaled_median_y = float(np.median(aqi_scaled))
+                    robust_scale_scaled = max(float(np.median(np.abs(aqi_scaled - scaled_median_y))) * 1.4826, 0.02)
 
                     fit_result = _least_squares_h10(
-                        _resid, x0=[base0, amp0, 2.0],
-                        bounds=([0.0, 0.0, 0.05], [float(aqi_vals.max()) + 1, float(aqi_vals.max() * 3 + 1), 15.0]),
-                        loss="huber", f_scale=robust_scale,
+                        _resid_scaled, x0=[scaled_median_y, 0.5, 2.0],
+                        bounds=([0.0, 0.0, 0.0], [1.0, np.inf, np.inf]),
+                        loss="huber", f_scale=robust_scale_scaled,
                     )
-                    fit_params_h10 = fit_result.x
+                    fit_params_scaled_h10 = fit_result.x
+
+                    # ── Post-scale reversal: predict in scaled space, then inverse-transform
+                    # both the TTI grid and the predicted AQI back to original units. ──
                     t_rg = np.linspace(tti_vals.min(), tti_vals.max(), 200)
-                    pred_y = _softplus_response(fit_params_h10, t_rg)
-                    pred_at_obs = _softplus_response(fit_params_h10, tti_vals)
+                    t_rg_scaled = x_scaler_h10.transform(t_rg.reshape(-1, 1)).flatten()
+                    pred_y_scaled = _softplus_scaled(fit_params_scaled_h10, t_rg_scaled)
+                    pred_y = y_scaler_h10.inverse_transform(pred_y_scaled.reshape(-1, 1)).flatten()
+
+                    pred_at_obs_scaled = _softplus_scaled(fit_params_scaled_h10, tti_scaled)
+                    pred_at_obs = y_scaler_h10.inverse_transform(pred_at_obs_scaled.reshape(-1, 1)).flatten()
                     ss_res = float(np.sum((aqi_vals - pred_at_obs) ** 2))
                     ss_tot = float(np.sum((aqi_vals - aqi_vals.mean()) ** 2))
                     fit_r2_h10 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
-                    fit_kind_h10 = "Huber-robust monotonic softplus fit"
+                    fit_kind_h10 = "Huber-robust monotonic softplus fit (fit on Min-Max scaled data)"
                     has_fit_h10 = True
                     trend_label = "Monotonic Idling Response (Robust Softplus Fit)"
                 else:
