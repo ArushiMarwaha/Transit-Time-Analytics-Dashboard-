@@ -2934,11 +2934,14 @@ def main():
  
         # ==============================================================================
         # 7. SEGMENT-WISE CONGESTION HEATMAP
-        # X-axis = segments numbered sequentially along the corridor (not the
-        # raw segment_id string), Y-axis = hour of day. In single-corridor
-        # mode this is exactly one corridor's own segment chain; in overview
-        # mode it is capped to the Top-N most congested corridors (by GCI)
-        # so the figure never has to render hundreds of corridors at once.
+        # Single-corridor mode: X-axis = segments numbered sequentially along
+        # THAT corridor, Y-axis = hour of day — exactly per corridor, as asked.
+        # Overview mode does NOT try to flatten every corridor's segments onto
+        # one x-axis (that's unreadable no matter how many corridors are
+        # capped, since the segment COUNT per corridor is what blows up the
+        # axis). Instead the overview is a compact Corridor x Hour heatmap —
+        # pick a corridor from the selector above to drop into its own
+        # segment-level view.
         # ==============================================================================
         st.write("---")
 
@@ -2955,68 +2958,91 @@ def main():
             heat_scope_metrics = metrics[metrics['corridor_name'] == selected_corridor_h1].sort_values('corridor_position')
             heat_scope_df = df_analyzed[df_analyzed['corridor_name'] == selected_corridor_h1]
             seg_order_all = heat_scope_metrics['segment_uid'].tolist()
+            n_segs_h1 = len(seg_order_all)
             seg_pos_map = heat_scope_metrics.set_index('segment_uid')['corridor_position'].to_dict()
             seg_class_map = heat_scope_metrics.set_index('segment_uid')['classification'].to_dict()
-            col_label_map = {s: f"Seg {seg_pos_map[s]:02d}" for s in seg_order_all}
-            fig_width = min(max(8, 0.55 * len(seg_order_all)), 24.0)
-            heat_title = f"{selected_corridor_h1} — {len(seg_order_all)} segments, numbered sequentially"
-            x_rotation, x_ha = 0, 'center'
+            col_label_map = {s: f"{seg_pos_map[s]:03d}" for s in seg_order_all}
+
+            # A single corridor can itself have anywhere from a handful to a
+            # few hundred segments. Keep every column in the heatmap (no data
+            # is dropped) but only PRINT a label every Nth column once there
+            # are too many to read, instead of overlapping illegible text.
+            label_step = max(1, -(-n_segs_h1 // 45))  # ceil-divide: cap ~45 visible labels
+            fig_width = min(max(9, 0.16 * n_segs_h1), 30.0)
+            heat_title = f"{selected_corridor_h1} — {n_segs_h1} segments, numbered sequentially"
+            x_rotation, x_ha, tick_fontsize = (90, 'center', 8.0) if n_segs_h1 > 30 else (0, 'center', 8.5)
+
+            heat_pivot = heat_scope_df.pivot_table(
+                index='hour_of_day', columns='segment_uid', values='is_congested', aggfunc='mean'
+            )
+            heat_pivot = heat_pivot.reindex(columns=seg_order_all)
+            heat_pivot = heat_pivot.reindex(range(24))
+            heat_pivot.columns = [col_label_map.get(s, s) for s in seg_order_all]
+
+            fig_seg_heat, ax_seg_heat = plt.subplots(figsize=(fig_width, 8))
+            sns.heatmap(
+                heat_pivot, cmap='YlOrRd', vmin=0, vmax=1, ax=ax_seg_heat,
+                cbar_kws={'label': 'Congestion strength (fraction of hour congested)'},
+                linewidths=0.3, linecolor='white'
+            )
+            for i, (tick_label, seg_uid) in enumerate(zip(ax_seg_heat.get_xticklabels(), seg_order_all)):
+                status = seg_class_map.get(seg_uid, "No structural issue detected")
+                tick_label.set_color(STATUS_COLORS[status])
+                tick_label.set_fontweight('bold')
+                if i % label_step != 0:
+                    tick_label.set_text('')  # thin labels, keep every column of actual data
+
+            ax_seg_heat.set_title(heat_title, fontsize=12, fontweight='bold', color='#1a1a2e', pad=12)
+            ax_seg_heat.set_xlabel("Segment number (sequential along corridor)", fontsize=10, fontweight='bold', color='#1a1a2e')
+            ax_seg_heat.set_ylabel("Hour of day", fontsize=10, fontweight='bold', color='#1a1a2e')
+            plt.setp(ax_seg_heat.get_xticklabels(), rotation=x_rotation, ha=x_ha, fontsize=tick_fontsize)
+            plt.yticks(fontsize=8.5)
+            plt.tight_layout(pad=1.2)
+            st.pyplot(fig_seg_heat)
+            plt.close(fig_seg_heat)
+            if label_step > 1:
+                st.caption(
+                    f"{n_segs_h1} segments on this corridor — every column of data is drawn, but only every "
+                    f"{label_step}-th segment number is printed to stay legible. Hover/zoom is not available in a "
+                    "static image, so use the Spillover Cascade Map below to inspect any specific segment's neighbors."
+                )
         else:
-            top_corridors_overview = corridor_gci.head(TOP_N_OVERVIEW)['corridor_name'].tolist()
-            section_title(f"Segment-Wise Congestion Heatmap — Top {len(top_corridors_overview)} Most Congested Corridors")
+            section_title(f"Network Overview Heatmap — All {n_corridors_total} Corridors")
             st.markdown(
-                '<div class="h1-section-sub">This network has ' + str(n_corridors_total) + ' corridors — showing '
-                'only the most congested ones by Global Congestion Index so the chart stays readable. Segments are '
-                'still grouped and ordered by corridor. Pick a specific corridor from the selector above for its '
-                'own sequentially-numbered breakdown. Labels color-coded by status: red = confirmed root cause, '
-                'yellow = likely spillover, green = no structural issue.</div>',
+                '<div class="h1-section-sub">Flattening every corridor\'s individual segments onto one x-axis is '
+                'unreadable regardless of how many corridors are shown (segment counts per corridor can run into '
+                'the hundreds) — so this overview aggregates to one row per corridor instead. X-axis = hour of day, '
+                'Y-axis = corridor, ordered by Global Congestion Index (most congested at top). Pick a specific '
+                'corridor from the selector above for its own sequentially-numbered, segment-level heatmap.</div>',
                 unsafe_allow_html=True
             )
-            heat_scope_metrics = metrics[metrics['corridor_name'].isin(top_corridors_overview)] \
-                .sort_values(['corridor_name', 'mean_sequence_order'])
-            heat_scope_df = df_analyzed[df_analyzed['corridor_name'].isin(top_corridors_overview)]
-            seg_order_all = heat_scope_metrics['segment_uid'].tolist()
-            seg_class_map = heat_scope_metrics.set_index('segment_uid')['classification'].to_dict()
-            col_label_map = heat_scope_metrics.set_index('segment_uid')['segment_id'].to_dict()
-            fig_width = min(max(10, 0.9 * len(seg_order_all)), 34.0)
-            heat_title = f"Congestion Strength by Segment and Hour ({len(seg_order_all)} segments across {len(top_corridors_overview)} of {n_corridors_total} corridors)"
-            x_rotation, x_ha = 30, 'right'
+            corridor_order_overview = corridor_gci.sort_values('global_congestion_index', ascending=False)['corridor_name'].tolist()
+            heat_pivot = df_analyzed.pivot_table(
+                index='corridor_name', columns='hour_of_day', values='is_congested', aggfunc='mean'
+            )
+            heat_pivot = heat_pivot.reindex(index=corridor_order_overview, columns=range(24))
 
-        heat_pivot = heat_scope_df.pivot_table(
-            index='hour_of_day', columns='segment_uid', values='is_congested', aggfunc='mean'
-        )
-        heat_pivot = heat_pivot.reindex(columns=seg_order_all)
-        heat_pivot = heat_pivot.reindex(range(24))
-        heat_pivot.columns = [col_label_map.get(s, s) for s in seg_order_all]
-
-        fig_seg_heat, ax_seg_heat = plt.subplots(figsize=(fig_width, 8))
-        sns.heatmap(
-            heat_pivot, cmap='YlOrRd', vmin=0, vmax=1, ax=ax_seg_heat,
-            cbar_kws={'label': 'Congestion strength (fraction of hour congested)'},
-            linewidths=0.4, linecolor='white'
-        )
-
-        for tick_label, seg_uid in zip(ax_seg_heat.get_xticklabels(), seg_order_all):
-            status = seg_class_map.get(seg_uid, "No structural issue detected")
-            tick_label.set_color(STATUS_COLORS[status])
-            tick_label.set_fontweight('bold')
-
-        ax_seg_heat.set_title(heat_title, fontsize=12, fontweight='bold', color='#1a1a2e', pad=12)
-        ax_seg_heat.set_xlabel(
-            "Segment number (sequential along corridor)" if is_single_h1 else "Segment",
-            fontsize=10, fontweight='bold', color='#1a1a2e'
-        )
-        ax_seg_heat.set_ylabel("Hour of day", fontsize=10, fontweight='bold', color='#1a1a2e')
-        plt.xticks(rotation=x_rotation, ha=x_ha, fontsize=8.5)
-        plt.yticks(fontsize=8.5)
-        plt.tight_layout(pad=1.2)
-        st.pyplot(fig_seg_heat)
-        plt.close(fig_seg_heat)
-        st.caption(
-            "Corridors that silently conflated two opposite one-way directions are already split into two "
-            "independent chains upstream, so directional pairs (e.g. Central-Puzhal / Puzhal-Central) are never "
-            "averaged together here."
-        )
+            fig_seg_heat, ax_seg_heat = plt.subplots(figsize=(11, max(3.5, 0.42 * len(corridor_order_overview))))
+            sns.heatmap(
+                heat_pivot, cmap='YlOrRd', vmin=0, vmax=1, ax=ax_seg_heat,
+                cbar_kws={'label': 'Congestion strength (fraction of hour congested)'},
+                linewidths=0.4, linecolor='white'
+            )
+            ax_seg_heat.set_title(
+                f"Corridor x Hour Congestion Overview ({n_corridors_total} corridors, ranked by GCI)",
+                fontsize=12, fontweight='bold', color='#1a1a2e', pad=12
+            )
+            ax_seg_heat.set_xlabel("Hour of day", fontsize=10, fontweight='bold', color='#1a1a2e')
+            ax_seg_heat.set_ylabel("Corridor (most congested at top)", fontsize=10, fontweight='bold', color='#1a1a2e')
+            plt.xticks(rotation=0, fontsize=8.5)
+            plt.yticks(fontsize=8.5, rotation=0)
+            plt.tight_layout(pad=1.2)
+            st.pyplot(fig_seg_heat)
+            plt.close(fig_seg_heat)
+            st.caption(
+                "Corridors that silently conflated two opposite one-way directions are already split into two "
+                "independent rows here (e.g. Central-Puzhal / Puzhal-Central are never averaged together)."
+            )
 
         # ==============================================================================
         # 7b. SPILLOVER PROPAGATION / CASCADE MAP — only meaningful for one
@@ -3183,65 +3209,82 @@ def main():
  
         # ==============================================================================
         # 9. EMPIRICAL CASE STUDY (multi-segment corridors)
-        # In single-corridor mode this renders only the selected corridor. In
-        # overview mode it is capped to the Top-N most congested multi-segment
-        # corridors by GCI, instead of one figure per corridor network-wide.
+        # This only makes sense one corridor at a time — plotting one line
+        # (plus one legend entry) per segment falls apart the moment a
+        # corridor has more than ~15 segments, and some corridors here run
+        # into the hundreds. So this is now a compact heatmap (same
+        # sequential-segment-number x hour-of-day layout as the main
+        # heatmap above) with verified root-cause breakdown events marked
+        # directly on top of it, instead of a chart with an unreadable
+        # segment-per-line legend.
         # ==============================================================================
-        if is_single_h1:
-            multi_corridors = [selected_corridor_h1] if metrics.loc[
-                metrics['corridor_name'] == selected_corridor_h1, 'multi_segment_corridor'
-            ].any() else []
+        st.write("---")
+        section_title("Empirical Verification: Root-Cause Events")
+        if not is_single_h1:
+            st.info(
+                "Select a specific corridor from the dropdown above to see verified breakdown events plotted "
+                "against that corridor's own hourly congestion pattern — this view is per corridor by design."
+            )
+        elif not metrics.loc[metrics['corridor_name'] == selected_corridor_h1, 'multi_segment_corridor'].any():
+            st.info(f"{selected_corridor_h1} has only one monitored segment — there is no upstream neighbor to empirically cross-check against.")
         else:
-            multi_seg_corridor_names = set(metrics.loc[metrics['multi_segment_corridor'], 'corridor_name'].unique())
-            multi_corridors = [
-                c for c in corridor_gci['corridor_name'].tolist() if c in multi_seg_corridor_names
-            ][:TOP_N_OVERVIEW]
+            case_metrics = metrics[metrics['corridor_name'] == selected_corridor_h1].sort_values('corridor_position')
+            case_df = df_analyzed[df_analyzed['corridor_name'] == selected_corridor_h1]
+            seg_order_case = case_metrics['segment_uid'].tolist()
+            n_segs_case = len(seg_order_case)
+            seg_pos_map_case = case_metrics.set_index('segment_uid')['corridor_position'].to_dict()
+            seg_class_map_case = case_metrics.set_index('segment_uid')['classification'].to_dict()
+            col_pos = {s: i for i, s in enumerate(seg_order_case)}  # 0-based column index for scatter alignment
 
-        if len(multi_corridors) > 0:
-            st.write("---")
-            section_title("Empirical Verification: Root-Cause Events")
-            if not is_single_h1:
-                st.caption(
-                    f"Showing the {len(multi_corridors)} most congested multi-segment corridors by GCI. Select a "
-                    "specific corridor above to see this chart for any corridor in the network."
-                )
-            for corr in multi_corridors:
-                case_df = df_analyzed[df_analyzed['corridor_name'] == corr]
-                corr_metrics_map = metrics[metrics['corridor_name'] == corr].set_index('segment_uid')['classification']
- 
-                fig4, ax4 = plt.subplots(figsize=(12, 5.0))
-                for seg_uid, seg_sub in case_df.groupby('segment_uid'):
-                    seg_label = metrics.loc[metrics['segment_uid'] == seg_uid, 'segment_id'].iloc[0]
-                    seg_status = corr_metrics_map.get(seg_uid, "No structural issue detected")
-                    hourly = seg_sub.groupby('hour_of_day')['travel_time_index_tti'].mean()
-                    ax4.plot(hourly.index, hourly.values, marker='o', markersize=4, linewidth=1.6,
-                             color=STATUS_COLORS[seg_status], label=seg_label)
- 
-                    rc_events = seg_sub[seg_sub['root_cause_event'] == True]
-                    if len(rc_events) > 0:
-                        rc_hourly = rc_events.groupby('hour_of_day')['travel_time_index_tti'].mean()
-                        ax4.scatter(rc_hourly.index, rc_hourly.values, color='#e74c3c', zorder=6, s=130,
-                                    marker='X', edgecolors='white', linewidths=1.0, label=f"Verified breakdown ({seg_label})")
- 
-                ax4.set_title(f"Corridor: {corr}", fontsize=11, fontweight='bold', pad=12, color='#1a1a2e')
-                ax4.set_xlabel("Hour of day", fontweight='bold', fontsize=9, color='#1a1a2e')
-                ax4.set_ylabel("Mean TTI", fontweight='bold', fontsize=9, color='#1a1a2e')
-                ax4.set_xlim(0, 23)
-                ax4.set_xticks(range(0, 24, 2))
-                ax4.grid(True, linestyle=':', alpha=0.4)
-                ax4.legend(loc='upper right', fontsize=8.5, frameon=True, facecolor='white')
-                style_axes(ax4)
-                plt.xticks(fontsize=8, color='#4a5568')
-                plt.yticks(fontsize=8, color='#4a5568')
-                plt.tight_layout(pad=1.2)
-                st.pyplot(fig4)
-                plt.close(fig4)
- 
-                n_rc_total = int(case_df['root_cause_event'].sum())
-                st.caption(
-                    f"The red 'X' markers represent isolated, verified root-cause breakdown events for the specific downstream segment. While the solid red line displays the segment's overall everyday average—which includes normal, clear-flowing days that naturally pull the average down—the 'X' markers plot the extreme severity of the bottleneck only during the specific intervals it actually failed. These markers visually isolate the exact moments where the segment experienced severe gridlock independently while its immediate upstream neighbor remained clear, mathematically proving a localized structural failure rather than a cascading traffic jam."
-                    f"({n_rc_total} verified instances over the observation window)."
-                )
+            st.markdown(
+                '<div class="h1-section-sub">Same layout as the heatmap above (segment number sequential on the '
+                'x-axis, hour of day on the y-axis), colored by mean TTI. Each black "×" marks an hour/segment cell '
+                'that contains at least one <b>verified</b> root-cause breakdown event — an isolated failure on that '
+                'segment while its immediate upstream neighbor stayed clear — as distinct from ordinary busy-hour '
+                'congestion.</div>',
+                unsafe_allow_html=True
+            )
+
+            tti_pivot = case_df.pivot_table(index='hour_of_day', columns='segment_uid', values='travel_time_index_tti', aggfunc='mean')
+            tti_pivot = tti_pivot.reindex(columns=seg_order_case).reindex(range(24))
+            tti_pivot.columns = [f"{seg_pos_map_case[s]:03d}" for s in seg_order_case]
+
+            rc_cells = case_df[case_df['root_cause_event'] == True][['segment_uid', 'hour_of_day']].drop_duplicates()
+
+            label_step_case = max(1, -(-n_segs_case // 45))
+            fig4, ax4 = plt.subplots(figsize=(min(max(9, 0.16 * n_segs_case), 30.0), 8))
+            sns.heatmap(
+                tti_pivot, cmap='YlOrRd', ax=ax4,
+                cbar_kws={'label': 'Mean TTI'}, linewidths=0.3, linecolor='white'
+            )
+            for _, rc_row in rc_cells.iterrows():
+                if rc_row['segment_uid'] in col_pos:
+                    ax4.scatter(
+                        col_pos[rc_row['segment_uid']] + 0.5, rc_row['hour_of_day'] + 0.5,
+                        marker='x', color='black', s=70, linewidths=2.0, zorder=6
+                    )
+            for i, (tick_label, seg_uid) in enumerate(zip(ax4.get_xticklabels(), seg_order_case)):
+                status = seg_class_map_case.get(seg_uid, "No structural issue detected")
+                tick_label.set_color(STATUS_COLORS[status])
+                tick_label.set_fontweight('bold')
+                if i % label_step_case != 0:
+                    tick_label.set_text('')
+
+            ax4.set_title(f"{selected_corridor_h1} — Mean TTI with Verified Breakdown Events", fontsize=11, fontweight='bold', pad=12, color='#1a1a2e')
+            ax4.set_xlabel("Segment number (sequential along corridor)", fontweight='bold', fontsize=9, color='#1a1a2e')
+            ax4.set_ylabel("Hour of day", fontweight='bold', fontsize=9, color='#1a1a2e')
+            plt.setp(ax4.get_xticklabels(), rotation=(90 if n_segs_case > 30 else 0), ha='center', fontsize=8.0)
+            plt.yticks(fontsize=8.5)
+            plt.tight_layout(pad=1.2)
+            st.pyplot(fig4)
+            plt.close(fig4)
+
+            n_rc_total = int(case_df['root_cause_event'].sum())
+            st.caption(
+                f"Each '×' is an isolated, verified root-cause breakdown event on that segment while its immediate "
+                f"upstream neighbor stayed clear — mathematically distinct from ordinary busy-hour congestion. "
+                f"{n_rc_total} verified instances on {selected_corridor_h1} over the observation window."
+            )
  
         # ==============================================================================
         # 9b. MACHINE LEARNING CROSS-CHECK: Logistic Regression with NumPy
@@ -3388,8 +3431,7 @@ def main():
                 f'<span style="color:{dot_color}; font-weight:bold;">●</span> `{row["segment_id"]}` — '
                 f'{row["classification"]} ({row["priority_tier"]} priority): {row["recommended_action"]}',
                 unsafe_allow_html=True
-            )
- 
+            ) 
  
  
    # =============================================================================
