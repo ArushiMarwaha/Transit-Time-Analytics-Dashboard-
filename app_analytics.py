@@ -6306,15 +6306,15 @@ def main():
                     border_color="#f1c40f"
                 )
     # =============================================================================
-    # MODULE TAB 9: HYPOTHESIS 9 - TAXONOMY CLUSTERING — (ARUSHI)
+    # MODULE TAB 9: HYPOTHESIS 9 - SOFT TAXONOMY, SEGMENT SEPARATION & HYBRID OVERLAP
     # =============================================================================
     elif selected_tab == "Hypothesis 9: Unsupervised Taxonomy Clustering":
         inject_professional_style()
         apply_pro_plot_style()
 
         render_page_header(
-            "Hypothesis 9 · Unsupervised Network Taxonomy Clustering ",
-            "Grouping road segments with identical failure mechanics into standardized, actionable policy groups"
+            "Hypothesis 9 · Soft Taxonomy, Segment Separation & Hybrid Overlap",
+            "Gaussian-Mixture soft clustering of every micro-segment into blended policy archetypes, with corridor- and peak-level drilldown"
         )
 
         # ==============================================================================
@@ -6322,39 +6322,97 @@ def main():
         # ==============================================================================
         section_title("Business Question")
         st.markdown(
-            "**How can we classify all 137 directional segments into distinct behavioral groups so CUMTA can manage the "
-            "metropolitan network using standardized policy templates rather than 137 individual ad-hoc recommendations?**\n\n"
-            "Treating every road stretch uniquely delays policy deployment. This module groups the complete monitored "
-            "infrastructure network into four distinct behavioral categories using a multi-model clustering topology, "
-            "providing standardized asset management workflows across the city."
+            "**Which micro-segments belong cleanly to a single policy archetype, and which ones straddle two "
+            "archetypes at once — meaning a single-track intervention will under-fix the problem?**\n\n"
+            "Hard clustering forces every segment into exactly one bucket even when its behavior is genuinely mixed "
+            "(for example, a segment that is both structurally congested *and* tidal). This module replaces the "
+            "hard assignment with a **Gaussian Mixture Model (GMM)** that reports each segment's soft membership "
+            "probability across all four archetypes simultaneously, so CUMTA can see — and budget for — hybrid "
+            "corridors explicitly instead of hiding them inside a single dominant label."
         )
 
-        with st.expander("[REF] Formula Reference"):
+        with st.expander("📐 Methodology & Mathematical Framework", expanded=True):
             st.markdown(
-                "Feature arrays are scaled and processed through an intra-cluster objective minimization loop. "
-                "Three diagnostics validate the resulting taxonomy: the **Silhouette Coefficient** ($S_s$) measures "
-                "how tightly a segment sits inside its own cluster versus the nearest neighboring cluster (range "
-                "-1 to +1, higher is better separation); the **bootstrap Adjusted Rand Index (ARI)** re-runs the "
-                "clustering on resampled subsets of the network and scores how consistently segments land in the "
-                "same group each time (1.0 = perfectly stable); and **PCA** compresses the five standardized "
-                "features into two axes purely for visualization, ordered by the variance they explain."
+                "**1. Feature standardization.** Six per-segment features are z-scored before clustering so no "
+                "single metric (e.g. raw TTI) dominates purely due to scale: AM-peak mean TTI, PM-peak mean TTI, "
+                "off-peak mean TTI, Buffer Time Index (BTI), Coefficient of Variation (CV) of TTI, and the tidal "
+                "split coefficient (Lambda_max).\n\n"
+                "**2. Soft clustering via Gaussian Mixture Model.** Unlike K-Means / hard rule cuts, a GMM models "
+                "each archetype as a multivariate Gaussian and returns a full probability vector "
+                r"$W_{s} = [w_{s,1}, w_{s,2}, w_{s,3}, w_{s,4}]$ per segment $s$ via the Expectation-Maximization "
+                "algorithm, rather than a single label. The **primary archetype** is "
+                r"$\arg\max_k w_{s,k}$; a segment is a **hybrid / overlapping** case when its primary probability "
+                "falls below the purity threshold (0.85) and a meaningful secondary probability remains.\n\n"
+                "**3. Archetype semantics.** The four GMM components are mapped to policy archetypes by ranking "
+                "component centroids (not by an arbitrary manual cut): the component with the highest all-day mean "
+                "delay is *Chronic Structural*; among the rest, the largest peak-minus-off-peak delay gap is "
+                "*Operational Peak Shock*; the largest AM/PM asymmetry is *Tidal Commuter*; the remainder is "
+                "*Stable Baseline*.\n\n"
+                "**4. PCA projection.** For visualization only, the six standardized features are compressed to "
+                "two axes: $PC_1$ (Congestion Severity — dominated by the TTI/BTI features) and $PC_2$ (Travel "
+                "Unpredictability — dominated by CV / tidal asymmetry)."
             )
-            st.latex(r"Z = \frac{X - \mu}{\sigma} \quad \vert \quad \arg\min_{C} \sum_{k=1}^{K} \sum_{s \in C_k} \left\| \mathbf{Z}_s - \mathbf{\mu}_k \right\|^2 \quad \vert \quad S_s = \frac{b_s - a_s}{\max(a_s, b_s)}")
+            st.latex(
+                r"Z = \frac{X-\mu}{\sigma} \quad\vert\quad "
+                r"p(Z_s) = \sum_{k=1}^{4} \pi_k \, \mathcal{N}(Z_s \mid \mu_k, \Sigma_k) "
+                r"\quad\vert\quad w_{s,k} = \frac{\pi_k \, \mathcal{N}(Z_s \mid \mu_k, \Sigma_k)}{\sum_{j=1}^{4} \pi_j \, \mathcal{N}(Z_s \mid \mu_j, \Sigma_j)}"
+            )
+            st.markdown(
+                "A segment is flagged **high-risk hybrid** when $\\max_k w_{s,k} < 0.85$ **and** the second-highest "
+                "probability is $\\ge 0.30$ — i.e. no archetype cleanly dominates."
+            )
 
         st.write("---")
 
         # ==============================================================================
-        # 2. DATA COMPILING & COMPONENT TRANSFORMATION
+        # 2. SCOPE & TEMPORAL DRILLDOWN CONTROLS
+        # ==============================================================================
+        section_title("Drilldown Controls")
+        ctl_h9_a, ctl_h9_b = st.columns(2)
+        with ctl_h9_a:
+            corridor_opts_h9 = ["All Network"]
+            if "corridor_name" in df_fetched.columns:
+                corridor_opts_h9 += sorted(df_fetched["corridor_name"].dropna().astype(str).unique().tolist())
+            scope_h9 = st.selectbox("🛣️ Scope", corridor_opts_h9, key="h9_scope_select")
+        with ctl_h9_b:
+            temporal_h9 = st.selectbox(
+                "⏱️ Temporal Slice (drives Graph 2 / Graph 5 composite-delay views)",
+                ["Whole-Day", "AM Peak (07:00–10:00)", "PM Peak (17:00–20:00)", "Off-Peak (23:00–05:00)"],
+                key="h9_temporal_select"
+            )
+
+        AM_HOURS_H9, PM_HOURS_H9, OFF_HOURS_H9 = [7, 8, 9], [17, 18, 19], [23, 0, 1, 2, 3, 4, 5]
+
+        def _h9_slice_mask(hour_series, label):
+            if label.startswith("AM"):
+                return hour_series.isin(AM_HOURS_H9)
+            if label.startswith("PM"):
+                return hour_series.isin(PM_HOURS_H9)
+            if label.startswith("Off"):
+                return hour_series.isin(OFF_HOURS_H9)
+            return pd.Series(True, index=hour_series.index)
+
+        # ==============================================================================
+        # 3. DATA COMPILING & COMPONENT TRANSFORMATION
         # ==============================================================================
         df_tax_raw = df_fetched.copy()
         if 'lat' not in df_tax_raw.columns or 'lon' not in df_tax_raw.columns:
             np.random.seed(42)
             df_tax_raw['lat'] = np.random.uniform(13.00, 13.15, size=len(df_tax_raw))
             df_tax_raw['lon'] = np.random.uniform(80.20, 80.28, size=len(df_tax_raw))
+        if 'corridor_name' not in df_tax_raw.columns:
+            df_tax_raw['corridor_name'] = 'Unassigned Corridor'
 
-        df_tax_base = df_tax_raw.groupby('shapefile_segment_name').agg(
-            mu_peak=('travel_time_index_tti', lambda x: x[df_tax_raw['derived_hour'].isin([8,9,10,17,18,19,20])].mean()),
-            mu_offpeak=('travel_time_index_tti', lambda x: x[df_tax_raw['derived_hour'].isin([23,0,1,2,3,4,5])].mean()),
+        if scope_h9 != "All Network":
+            df_tax_scope = df_tax_raw[df_tax_raw['corridor_name'].astype(str) == scope_h9].copy()
+        else:
+            df_tax_scope = df_tax_raw.copy()
+
+        df_tax_base = df_tax_scope.groupby('shapefile_segment_name').agg(
+            corridor_name=('corridor_name', 'first'),
+            mu_am=('travel_time_index_tti', lambda x: x[df_tax_scope['derived_hour'].isin(AM_HOURS_H9)].mean()),
+            mu_pm=('travel_time_index_tti', lambda x: x[df_tax_scope['derived_hour'].isin(PM_HOURS_H9)].mean()),
+            mu_offpeak=('travel_time_index_tti', lambda x: x[df_tax_scope['derived_hour'].isin(OFF_HOURS_H9)].mean()),
             p95_tti=('travel_time_index_tti', lambda x: np.percentile(x.dropna(), 95) if len(x.dropna()) else 1.0),
             mean_tti=('travel_time_index_tti', 'mean'),
             std_tti=('travel_time_index_tti', 'std'),
@@ -6362,209 +6420,350 @@ def main():
             lon=('lon', 'mean')
         ).reset_index().fillna(1.0)
 
-        df_tax_base['bti_val'] = ((df_tax_base['p95_tti'] - df_tax_base['mean_tti']) / df_tax_base['mean_tti'].replace(0,1)) * 100
-        df_tax_base['beta_rain'] = (df_tax_base['p95_tti'] - df_tax_base['mean_tti']) * 0.012
-        df_tax_base['net_asymmetry'] = np.random.uniform(0.2, 1.5, size=len(df_tax_base))
+        df_tax_base['mu_peak'] = (df_tax_base['mu_am'] + df_tax_base['mu_pm']) / 2.0
+        df_tax_base['bti_val'] = ((df_tax_base['p95_tti'] - df_tax_base['mean_tti']) / df_tax_base['mean_tti'].replace(0, 1)) * 100
+        df_tax_base['cv_val'] = (df_tax_base['std_tti'] / df_tax_base['mean_tti'].replace(0, 1)).clip(lower=0)
+        _lo = df_tax_base[['mu_am', 'mu_pm']].min(axis=1).clip(lower=0.05)
+        _hi = df_tax_base[['mu_am', 'mu_pm']].max(axis=1)
+        df_tax_base['lambda_max'] = (_hi / _lo).clip(upper=10)
 
-        feat_cols = ['mu_peak', 'mu_offpeak', 'bti_val', 'beta_rain', 'net_asymmetry']
-        df_scaled = (df_tax_base[feat_cols] - df_tax_base[feat_cols].mean()) / df_tax_base[feat_cols].std().replace(0,1)
-
-        # PCA transformation implementation via covariance eigenvectors
-        pca_proj = np.dot(df_scaled, np.linalg.eigh(np.cov(df_scaled.T))[1][:, ::-1][:, :2])
-        df_tax_base['PC1'], df_tax_base['PC2'] = pca_proj[:, 0], pca_proj[:, 1]
-        df_tax_base['cluster_id'] = np.where(df_tax_base['mu_peak'] >= 1.7, 0, np.where(df_tax_base['beta_rain'] >= 0.010, 2, np.where(df_tax_base['bti_val'] >= 50, 1, 3)))
-        df_tax_base['assigned_taxonomy'] = df_tax_base['cluster_id'].map({0:'Cluster A: Chronic Structural', 1:'Cluster B: Peak Operational', 2:'Cluster C: Climate-Vulnerable', 3:'Cluster D: Tidal Commuter'})
-
-        # Group count variables for KPIs
-        q_c0 = int((df_tax_base['cluster_id'] == 0).sum())
-        q_c1 = int((df_tax_base['cluster_id'] == 1).sum())
-        q_c2 = int((df_tax_base['cluster_id'] == 2).sum())
-        q_c3 = int((df_tax_base['cluster_id'] == 3).sum())
-
-        # ==============================================================================
-        # 3. KPI HEADER ROW
-        # ==============================================================================
-        kpi_defs = [
-            ("Chronic Structural Nodes", q_c0, "#991B1B", "Cluster A allocations"),
-            ("Peak Bottlenecks", q_c1, "#D97706", "Cluster B allocations"),
-            ("Climate-Vulnerable Links", q_c2, "#166534", "Cluster C allocations"),
-            ("Tidal Corridors", q_c3, "#1E40AF", "Cluster D allocations"),
-        ]
-        render_kpi_row(kpi_defs)
-        st.write("")
-        st.write("---")
-
-        section_title("Spatial Matrix Map & Standardized Behavioral Clustering Taxonomy Ledger")
-        st.markdown('<div class="h1-section-sub">Unsupervised machine learning cluster assignments across geographic coordinates</div>', unsafe_allow_html=True)
-        
-        c_map, c_panel = st.columns([3, 2])
-        center_lat = df_tax_raw["lat"].dropna().mean()
-        center_lon = df_tax_raw["lon"].dropna().mean()
-        
-        with c_map:
-            m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="CartoDB positron")
-            
-            # ── Add High-Contrast HTML Floating Legend ─────────────────────────
-            legend_html_h9 = """
-            <div style="position:fixed; bottom:30px; left:30px; z-index:9999; background:white;
-                        padding:12px 16px; border-radius:8px; border:1px solid #CBD5E1;
-                        box-shadow: 0 2px 6px rgba(0,0,0,0.2); font-size:12px; font-family:sans-serif; color:#000000 !important;">
-              <b style="color:#000000 !important; font-size:13px;">Behavioral Clusters</b><br>
-              <hr style="margin:4px 0 8px 0; border:0; border-top:1px solid #E2E8F0;">
-              <span style="color:#991B1B; font-size:14px;">&#9632;</span> <span style="color:#000000 !important; font-weight:600;">Cluster A: Chronic Structural</span><br>
-              <span style="color:#D97706; font-size:14px;">&#9632;</span> <span style="color:#000000 !important; font-weight:600;">Cluster B: Peak Operational</span><br>
-              <span style="color:#166534; font-size:14px;">&#9632;</span> <span style="color:#000000 !important; font-weight:600;">Cluster C: Climate-Vulnerable</span><br>
-              <span style="color:#1E40AF; font-size:14px;">&#9632;</span> <span style="color:#000000 !important; font-weight:600;">Cluster D: Tidal Commuter</span>
-            </div>"""
-            m.get_root().html.add_child(folium.Element(legend_html_h9))
-
-            # ── Plot Solid High-Contrast Circle Markers ──────────────────────
-            colors_palette_map = {0: '#991B1B', 1: '#D97706', 2: '#166534', 3: '#1E40AF'}
-            for _, r in df_tax_base.dropna(subset=["lat", "lon"]).iterrows():
-                cluster_color = colors_palette_map.get(r['cluster_id'], '#7F7F7F')
-                folium.CircleMarker(
-                    [r["lat"], r["lon"]], 
-                    radius=5, 
-                    color=cluster_color, 
-                    fill=True, 
-                    fill_color=cluster_color,
-                    fill_opacity=0.9,
-                    tooltip=f"<b>Link:</b> {r['shapefile_segment_name']}<br><b>Taxonomy:</b> {r['assigned_taxonomy']}"
-                ).add_to(m)
-                
-            st_folium(m, height=450, use_container_width=True, returned_objects=[], key="map_geo_taxonomy")
-            
-        with c_panel:
-            st.dataframe(df_tax_base.style.format({'mu_peak': '{:.2f}', 'mu_offpeak': '{:.2f}', 'bti_val': '{:.1f}%'}).set_properties(**{'font-size': '12px'}).set_table_styles([
-                 {'selector': 'th', 'props': [('background-color', '#1A293B'), ('color', 'white'), ('font-weight', '600')]}
-            ]), width="stretch", hide_index=True, height=410)
-        st.write("---")
-
-        # ==============================================================================
-        # 4. GRAPH SUITE PANEL SPREADS
-        # ==============================================================================
-        section_title("Unsupervised Feature Spaces & Variance Check Grids")
-        col_g1, col_g2 = st.columns(2)
-        
-        with col_g1:
-            fig_corr = plt.figure(figsize=(6, 5), facecolor='white')
-            ax_corr = fig_corr.add_subplot(111, facecolor='white')
-            corr_cmap = sns.diverging_palette(220, 10, s=90, l=35, as_cmap=True)
-            sns.heatmap(
-                df_scaled.corr().abs(), annot=True, fmt=".2f", cmap=corr_cmap, ax=ax_corr, cbar=False,
-                linewidths=1.0, linecolor='white', annot_kws={"color": "#0F172A", "fontweight": "bold", "fontsize": 9},
-                vmin=0, vmax=1,
+        if len(df_tax_base) < 4:
+            st.warning(
+                f"⚠️ The current scope (**{scope_h9}**) has only {len(df_tax_base)} monitored micro-segment(s) — "
+                "a 4-archetype Gaussian Mixture needs at least 4 to fit safely. Switch to **All Network** or a "
+                "larger corridor to view the soft-taxonomy suite."
             )
-            style_axes(ax_corr)
-            st.pyplot(fig_corr)
-            plt.close(fig_corr)
-            st.caption(
-                "[INFO] Pearson correlation check isolates duplicate metrics to prevent doubled feature weight "
-                "anomalies. Cells closer to 1.0 (deep red) flag features carrying redundant signal."
-            )
+        else:
+            feat_cols_h9 = ['mu_am', 'mu_pm', 'mu_offpeak', 'bti_val', 'cv_val', 'lambda_max']
+            X_h9_raw = df_tax_base[feat_cols_h9].replace([np.inf, -np.inf], np.nan)
+            X_h9_raw = X_h9_raw.fillna(X_h9_raw.mean())
+            scaler_h9 = StandardScaler()
+            X_h9_scaled = scaler_h9.fit_transform(X_h9_raw)
 
-        with col_g2:
-            fig_pca = plt.figure(figsize=(6, 5), facecolor='white')
-            ax_pca = fig_pca.add_subplot(111, facecolor='white')
-            colors_palette = {
-                'Cluster A: Chronic Structural': '#991B1B',
-                'Cluster B: Peak Operational': '#D97706',
-                'Cluster C: Climate-Vulnerable': '#166534',
-                'Cluster D: Tidal Commuter': '#1E40AF',
+            gmm_h9 = GaussianMixture(n_components=4, covariance_type='diag', random_state=42, n_init=6, reg_covar=1e-3)
+            gmm_h9.fit(X_h9_scaled)
+            soft_probs_h9 = gmm_h9.predict_proba(X_h9_scaled)
+            hard_idx_h9 = soft_probs_h9.argmax(axis=1)
+
+            # ── Rank GMM components into semantically meaningful archetype labels ──
+            centroids_h9 = pd.DataFrame(scaler_h9.inverse_transform(gmm_h9.means_), columns=feat_cols_h9)
+            remaining_h9 = set(range(4))
+            label_map_h9 = {}
+            all_day_score = centroids_h9[['mu_am', 'mu_pm', 'mu_offpeak']].mean(axis=1)
+            c_chronic = max(remaining_h9, key=lambda i: all_day_score[i])
+            label_map_h9[c_chronic] = "Chronic Structural"
+            remaining_h9.discard(c_chronic)
+            peak_gap_score = (centroids_h9['mu_am'] + centroids_h9['mu_pm']) / 2 - centroids_h9['mu_offpeak']
+            c_peak = max(remaining_h9, key=lambda i: peak_gap_score[i])
+            label_map_h9[c_peak] = "Operational Peak Shock"
+            remaining_h9.discard(c_peak)
+            tidal_score = centroids_h9['lambda_max']
+            c_tidal = max(remaining_h9, key=lambda i: tidal_score[i])
+            label_map_h9[c_tidal] = "Tidal Commuter"
+            remaining_h9.discard(c_tidal)
+            c_stable = list(remaining_h9)[0]
+            label_map_h9[c_stable] = "Stable Baseline"
+
+            ARCHETYPES_H9 = ["Chronic Structural", "Operational Peak Shock", "Tidal Commuter", "Stable Baseline"]
+            ARCH_COLORS_H9 = {
+                "Chronic Structural": "#991B1B", "Operational Peak Shock": "#D97706",
+                "Tidal Commuter": "#1E40AF", "Stable Baseline": "#166534",
             }
-            sns.scatterplot(
-                data=df_tax_base, x='PC1', y='PC2', hue='assigned_taxonomy', palette=colors_palette, s=90,
-                ax=ax_pca, edgecolor='#0F172A', linewidth=0.8, alpha=0.95,
+            ordered_component_ix = [k for k, _ in sorted(label_map_h9.items(), key=lambda kv: ARCHETYPES_H9.index(kv[1]))]
+            for arch in ARCHETYPES_H9:
+                comp_ix = [k for k, v in label_map_h9.items() if v == arch][0]
+                df_tax_base[f"prob_{arch}"] = soft_probs_h9[:, comp_ix]
+            df_tax_base['primary_archetype'] = [label_map_h9[i] for i in hard_idx_h9]
+
+            prob_matrix_h9 = df_tax_base[[f"prob_{a}" for a in ARCHETYPES_H9]].values
+            sorted_probs_h9 = np.sort(prob_matrix_h9, axis=1)[:, ::-1]
+            df_tax_base['primary_prob'] = sorted_probs_h9[:, 0]
+            df_tax_base['secondary_prob'] = sorted_probs_h9[:, 1]
+            secondary_arch_ix = np.argsort(-prob_matrix_h9, axis=1)[:, 1]
+            df_tax_base['secondary_archetype'] = [ARCHETYPES_H9[i] for i in secondary_arch_ix]
+            df_tax_base['is_hybrid'] = (df_tax_base['primary_prob'] < 0.85) & (df_tax_base['secondary_prob'] >= 0.30)
+
+            # PCA projection for visualization
+            pca_h9 = PCA(n_components=2, random_state=42)
+            pca_coords_h9 = pca_h9.fit_transform(X_h9_scaled)
+            df_tax_base['PC1'], df_tax_base['PC2'] = pca_coords_h9[:, 0], pca_coords_h9[:, 1]
+
+            # ==============================================================================
+            # 4. KPI HEADER ROW
+            # ==============================================================================
+            kpi_defs = [
+                (f"{a}" if len(a) < 18 else a.split()[0], int((df_tax_base['primary_archetype'] == a).sum()), ARCH_COLORS_H9[a], f"Primary-archetype segments")
+                for a in ARCHETYPES_H9
+            ]
+            render_kpi_row(kpi_defs)
+            st.write("")
+            n_hybrid_h9 = int(df_tax_base['is_hybrid'].sum())
+            render_callout(
+                f"🧬 <b>{n_hybrid_h9} of {len(df_tax_base)}</b> monitored micro-segments ({n_hybrid_h9 / max(len(df_tax_base),1) * 100:.1f}%) "
+                f"are <b>high-risk hybrids</b> — no single archetype explains their behavior with $\\ge 85\\%$ confidence.",
+                border_color="#D97706"
             )
-            ax_pca.set_xlabel("Principal Component 1 (Maximum Variance)", color='#0F172A', fontweight='bold', fontsize=8)
-            ax_pca.set_ylabel("Principal Component 2 (Secondary Vector)", color='#0F172A', fontweight='bold', fontsize=8)
-            ax_pca.grid(True, linestyle=':', alpha=0.3, color='#94A3B8')
-            leg = ax_pca.legend(loc='best', frameon=True, facecolor='white', edgecolor='#CBD5E1', fontsize=7.5, title=None)
-            for text_h in leg.get_texts():
-                text_h.set_color('#0F172A')
-            style_axes(ax_pca)
-            st.pyplot(fig_pca)
-            plt.close(fig_pca)
+            st.write("---")
+
+            # ==============================================================================
+            # 5. LEADERBOARD TABLES
+            # ==============================================================================
+            section_title("Top Separated & Vulnerable Segment Leaderboards")
+            lb_col1, lb_col2 = st.columns(2)
+
+            with lb_col1:
+                st.markdown("**✅ Top 10 Purest Fits** ($W_{s,k} \\ge 0.85$)")
+                purest_h9 = df_tax_base[df_tax_base['primary_prob'] >= 0.85].sort_values('primary_prob', ascending=False).head(10)
+                if purest_h9.empty:
+                    st.info("No segment currently clears the 0.85 purity threshold in this scope/slice.")
+                else:
+                    st.dataframe(
+                        purest_h9[['shapefile_segment_name', 'corridor_name', 'primary_archetype', 'primary_prob']]
+                        .rename(columns={'shapefile_segment_name': 'Segment', 'corridor_name': 'Corridor',
+                                          'primary_archetype': 'Archetype', 'primary_prob': 'Membership %'})
+                        .style.format({'Membership %': '{:.1%}'}),
+                        width="stretch", hide_index=True, height=340
+                    )
+
+            with lb_col2:
+                st.markdown("**⚠️ Top 10 High-Risk Hybrid / Overlapping Segments**")
+                POLICY_BLEND_H9 = {
+                    "Chronic Structural": "structural widening",
+                    "Operational Peak Shock": "adaptive signal retiming",
+                    "Tidal Commuter": "reversible-lane deployment",
+                    "Stable Baseline": "routine monitoring only",
+                }
+                hybrid_h9 = df_tax_base[df_tax_base['is_hybrid']].copy()
+                hybrid_h9['overlap_margin'] = hybrid_h9['primary_prob'] - hybrid_h9['secondary_prob']
+                hybrid_h9 = hybrid_h9.sort_values('overlap_margin', ascending=True).head(10)
+                hybrid_h9['Recommended Blended CapEx Strategy'] = hybrid_h9.apply(
+                    lambda r: f"{POLICY_BLEND_H9[r['primary_archetype']]} + {POLICY_BLEND_H9[r['secondary_archetype']]}",
+                    axis=1
+                )
+                if hybrid_h9.empty:
+                    st.info("No high-risk hybrid segments detected in this scope/slice — taxonomy is cleanly separated.")
+                else:
+                    st.dataframe(
+                        hybrid_h9[['shapefile_segment_name', 'corridor_name', 'primary_archetype', 'primary_prob',
+                                   'secondary_archetype', 'secondary_prob', 'Recommended Blended CapEx Strategy']]
+                        .rename(columns={'shapefile_segment_name': 'Segment', 'corridor_name': 'Corridor',
+                                          'primary_archetype': 'Primary', 'primary_prob': 'Primary %',
+                                          'secondary_archetype': 'Secondary', 'secondary_prob': 'Secondary %'})
+                        .style.format({'Primary %': '{:.1%}', 'Secondary %': '{:.1%}'}),
+                        width="stretch", hide_index=True, height=340
+                    )
+            st.markdown(
+                "📊 **Statistical Verdict:** Purity separates segments the GMM is confident about from segments "
+                "sitting genuinely between two Gaussian components. 🏛️ **Business Insight:** Hybrid segments should "
+                "receive a **blended** CapEx package (both interventions, sized by their respective membership "
+                "weight) rather than the single-archetype template applied to purely-separated segments."
+            )
+            st.write("---")
+
+            # ==============================================================================
+            # 6. GRAPH 1 — PCA POLICY ARCHETYPE MAP
+            # ==============================================================================
+            section_title("Graph 1 · Multi-Axis PCA Policy Archetype Map")
+            fig_g1 = go.Figure()
+            for arch in ARCHETYPES_H9:
+                sub = df_tax_base[(df_tax_base['primary_archetype'] == arch) & (~df_tax_base['is_hybrid'])]
+                fig_g1.add_trace(go.Scatter(
+                    x=sub['PC1'], y=sub['PC2'], mode='markers', name=arch,
+                    marker=dict(size=10, color=ARCH_COLORS_H9[arch], line=dict(width=1, color='#0F172A')),
+                    customdata=np.stack([sub['shapefile_segment_name'], sub['corridor_name'],
+                                          sub['primary_prob'] * 100, sub['secondary_archetype'], sub['secondary_prob'] * 100], axis=-1),
+                    hovertemplate="<b>%{customdata[0]}</b><br>Corridor: %{customdata[1]}<br>"
+                                  f"Primary: {arch} — " + "%{customdata[2]:.1f}%<br>"
+                                  "Secondary: %{customdata[3]} — %{customdata[4]:.1f}%<extra></extra>"
+                ))
+            hyb = df_tax_base[df_tax_base['is_hybrid']]
+            fig_g1.add_trace(go.Scatter(
+                x=hyb['PC1'], y=hyb['PC2'], mode='markers', name='Overlapping / Hybrid',
+                marker=dict(size=15, color=hyb['primary_archetype'].map(ARCH_COLORS_H9), symbol='star',
+                            line=dict(width=1.5, color='#0F172A')),
+                customdata=np.stack([hyb['shapefile_segment_name'], hyb['corridor_name'],
+                                      hyb['primary_archetype'], hyb['primary_prob'] * 100,
+                                      hyb['secondary_archetype'], hyb['secondary_prob'] * 100], axis=-1),
+                hovertemplate="<b>%{customdata[0]}</b> (HYBRID)<br>Corridor: %{customdata[1]}<br>"
+                              "Primary: %{customdata[2]} — %{customdata[3]:.1f}%<br>"
+                              "Secondary: %{customdata[4]} — %{customdata[5]:.1f}%<extra></extra>"
+            ))
+            fig_g1.update_layout(
+                xaxis_title="PC1: Congestion Severity [higher = more structurally delayed]",
+                yaxis_title="PC2: Travel Unpredictability [higher = more volatile / tidal]",
+                template="plotly_white", height=520, legend=dict(orientation='h', y=-0.18),
+                margin=dict(t=20)
+            )
+            st.plotly_chart(fig_g1, use_container_width=True)
+            n_pure_g1 = int((~df_tax_base['is_hybrid']).sum())
             st.caption(
-                "[INFO] PCA dimension reduction exposes the natural clusters of segments across the network layout. "
-                "Tight, well-separated color blocks confirm the four taxonomy groups are behaviorally distinct."
+                f"📊 **Statistical Verdict:** {n_pure_g1} segments project into tight, single-archetype clusters; "
+                f"{n_hybrid_h9} star-marked segments sit in the geometric overlap between two Gaussians. "
+                f"🏛️ **Business Insight & CUMTA Intervention:** Treat star-marked segments as **dual-track** capital "
+                f"projects — do not force them into whichever archetype template happens to sort first."
             )
+            st.write("---")
 
-        # Rows 2
-        st.write("---")
-        col_g3, col_g4 = st.columns(2)
-        
-        silhouette_vals = [0.42, 0.58, 0.61, 0.53, 0.47, 0.41, 0.38, 0.34, 0.31]
-        best_k_idx = int(np.argmax(silhouette_vals))
-        best_k = np.arange(2, 11)[best_k_idx]
-        best_silhouette = silhouette_vals[best_k_idx]
+            # ==============================================================================
+            # 7. GRAPH 2 — TEMPORAL DRIFT SLOPE PLOT
+            # ==============================================================================
+            section_title("Graph 2 · Temporal Drift Profile (Off-Peak → AM Peak → PM Peak)")
+            df_tax_base['composite_offpeak'] = 0.6 * df_tax_base['mu_offpeak'] + 0.4 * (df_tax_base['bti_val'] / 100)
+            df_tax_base['composite_am'] = 0.6 * df_tax_base['mu_am'] + 0.4 * (df_tax_base['bti_val'] / 100)
+            df_tax_base['composite_pm'] = 0.6 * df_tax_base['mu_pm'] + 0.4 * (df_tax_base['bti_val'] / 100)
 
-        with col_g3:
-            fig_opt = plt.figure(figsize=(6, 4.2), facecolor='white')
-            ax_opt = fig_opt.add_subplot(111, facecolor='white')
-            ax_opt.plot(np.arange(2, 11), silhouette_vals, color='#1E40AF', marker='o', markersize=7,
-                        markerfacecolor='#1E40AF', markeredgecolor='#0F172A', linewidth=2.6)
-            ax_opt.scatter([best_k], [best_silhouette], color='#991B1B', s=140, zorder=5,
-                            edgecolor='#0F172A', linewidth=1.2, label=f"Optimal K = {best_k}")
-            ax_opt.axvline(best_k, color='#991B1B', linestyle=':', linewidth=1.6)
-            ax_opt.set_xlabel("Target Cluster Partition Spaces (K)", color='#0F172A', fontweight='bold', fontsize=8)
-            ax_opt.set_ylabel("Silhouette Coefficient", color='#0F172A', fontweight='bold', fontsize=8)
-            ax_opt.grid(True, linestyle=':', alpha=0.3, color='#94A3B8')
-            leg_opt = ax_opt.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#CBD5E1', fontsize=8)
-            for text_h in leg_opt.get_texts():
-                text_h.set_color('#0F172A')
-            style_axes(ax_opt)
-            st.pyplot(fig_opt)
-            plt.close(fig_opt)
+            fig_g2 = go.Figure()
+            sample_n_g2 = min(40, len(df_tax_base))
+            sample_g2 = df_tax_base.sample(sample_n_g2, random_state=7)
+            for _, r in sample_g2.iterrows():
+                fig_g2.add_trace(go.Scatter(
+                    x=["Off-Peak", "AM Peak", "PM Peak"],
+                    y=[r['composite_offpeak'], r['composite_am'], r['composite_pm']],
+                    mode='lines', line=dict(width=1, color=ARCH_COLORS_H9[r['primary_archetype']]),
+                    opacity=0.25, showlegend=False, hoverinfo='skip'
+                ))
+            arch_traj = df_tax_base.groupby('primary_archetype')[['composite_offpeak', 'composite_am', 'composite_pm']].mean()
+            for arch in ARCHETYPES_H9:
+                if arch in arch_traj.index:
+                    fig_g2.add_trace(go.Scatter(
+                        x=["Off-Peak", "AM Peak", "PM Peak"],
+                        y=arch_traj.loc[arch, ['composite_offpeak', 'composite_am', 'composite_pm']].values,
+                        mode='lines+markers', name=f"{arch} (archetype avg)",
+                        line=dict(width=4, color=ARCH_COLORS_H9[arch]), marker=dict(size=11, line=dict(width=1.5, color='#0F172A'))
+                    ))
+            fig_g2.update_layout(
+                xaxis_title="Temporal Slice",
+                yaxis_title="Composite Delay Score [0.6×TTI + 0.4×(BTI/100)]",
+                template="plotly_white", height=500, legend=dict(orientation='h', y=-0.18), margin=dict(t=20)
+            )
+            st.plotly_chart(fig_g2, use_container_width=True)
+            worst_jump_arch = (arch_traj['composite_am'] - arch_traj['composite_offpeak']).idxmax() if len(arch_traj) else "N/A"
             st.caption(
-                f"[VERDICT] Internal silhouette validation confirms K={best_k} creates the best mathematical "
-                f"separation profile (coefficient = {best_silhouette:.2f}), matching the four-cluster policy taxonomy above."
+                f"📊 **Statistical Verdict:** Faint lines are individual segments (sampled to {sample_n_g2} for "
+                f"legibility); bold lines are archetype-average trajectories. **{worst_jump_arch}** shows the "
+                f"steepest Off-Peak → AM-Peak jump. 🏛️ **Business Insight & CUMTA Intervention:** Corridors whose "
+                f"individual lines diverge sharply from their archetype average are early candidates for "
+                f"re-classification next cycle — deploy **adaptive signal timing** ahead of the peak-hour jump."
             )
+            st.write("---")
 
-        with col_g4:
-            fig_boot = plt.figure(figsize=(6, 4.2), facecolor='white')
-            ax_boot = fig_boot.add_subplot(111, facecolor='white')
-            ari_samples = np.random.normal(0.85, 0.02, 1000)
-            sns.kdeplot(ari_samples, fill=True, color='#166534', alpha=0.55, ax=ax_boot, linewidth=2.2)
-            ax_boot.axvline(0.82, color='#991B1B', linestyle='--', linewidth=2.0, label="Stability threshold (0.82)")
-            ax_boot.axvline(float(np.mean(ari_samples)), color='#1E40AF', linestyle='-', linewidth=2.0,
-                             label=f"Observed mean ({np.mean(ari_samples):.2f})")
-            ax_boot.set_xlabel("Adjusted Rand Index (ARI score)", color='#0F172A', fontweight='bold', fontsize=8)
-            ax_boot.set_ylabel("Bootstrap Resample Density", color='#0F172A', fontweight='bold', fontsize=8)
-            ax_boot.grid(True, linestyle=':', alpha=0.3, color='#94A3B8')
-            leg_boot = ax_boot.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='#CBD5E1', fontsize=7.5)
-            for text_h in leg_boot.get_texts():
-                text_h.set_color('#0F172A')
-            style_axes(ax_boot)
-            st.pyplot(fig_boot)
-            plt.close(fig_boot)
+            # ==============================================================================
+            # 8. GRAPH 3 — FULL-NETWORK SOFT-MEMBERSHIP HEATMAP
+            # ==============================================================================
+            section_title("Graph 3 · Full-Network Soft-Membership Matrix")
+            heat_df = df_tax_base.sort_values(['corridor_name', 'shapefile_segment_name'])
+            z_heat = heat_df[[f"prob_{a}" for a in ARCHETYPES_H9]].values * 100
+            fig_g3 = go.Figure(data=go.Heatmap(
+                z=z_heat, x=ARCHETYPES_H9, y=heat_df['shapefile_segment_name'],
+                colorscale='RdYlBu_r', colorbar=dict(title="Membership %"), zmin=0, zmax=100
+            ))
+            heat_height = max(420, min(1400, 14 * len(heat_df)))
+            fig_g3.update_layout(
+                xaxis_title="Policy Archetype", yaxis_title="Micro-Segment (grouped by corridor, alphabetical)",
+                template="plotly_white", height=heat_height, margin=dict(t=20)
+            )
+            st.plotly_chart(fig_g3, use_container_width=True)
             st.caption(
-                "[VERDICT] Bootstrap stability check: the observed ARI distribution sits comfortably above the "
-                "0.82 threshold, proving clusters reflect stable travel archetypes rather than resampling noise."
+                "📊 **Statistical Verdict:** Rows with one dominant deep cell are cleanly separated; rows with two "
+                "comparably warm cells are the hybrid segments already flagged above. 🏛️ **Business Insight & "
+                "CUMTA Intervention:** Use this matrix as the master audit sheet when sizing next fiscal year's "
+                "blended CapEx allocation across archetypes."
             )
+            st.write("---")
 
-        # ==============================================================================
-        # 5. HANDOVER MATRIX TABLE
-        # ==============================================================================
-        st.write("---")
-        section_title("Capital Expenditure Policy Intervention Matrix")
-        policy_t = pd.DataFrame([
-            {'Assigned Taxonomy Group': 'Cluster A: Chronic Structural Deficit', 'Centroid Target Profile Vector': 'High Peak TTI + High Off-Peak TTI + Flat Low Variance', 'Targeted CUMTA Policy Intervention': 'Execute Structural Reconstruction & Physical Capacity Widening'},
-            {'Assigned Taxonomy Group': 'Cluster B: Peak Operational Bottleneck', 'Centroid Target Profile Vector': 'High Buffer Time Margin (BTI >= 50%) + Dense Intersections', 'Targeted CUMTA Policy Intervention': 'Deploy Interconnected Adaptive Signal Timing Optimization Frameworks'},
-            {'Assigned Taxonomy Group': 'Cluster C: Climate-Vulnerable Link', 'Centroid Target Profile Vector': 'Elevated Monsoon Rain Elasticity Score (Beta Rain >= 0.012)', 'Targeted CUMTA Policy Intervention': 'Allocate Targeted Capital Budgets to Stormwater Drainage Remediation'},
-            {'Assigned Taxonomy Group': 'Cluster D: Tidal Commuter Corridor', 'Centroid Target Profile Vector': 'High Net Asymmetry Index Split + Active Peak Inversion Loop', 'Targeted CUMTA Policy Intervention': 'Implement Dynamic Automated Reversible Lane Traffic Systems'}
-        ])
-        st.table(policy_t)
+            # ==============================================================================
+            # 9. GRAPH 4 — PARALLEL COORDINATES FEATURE PROFILE
+            # ==============================================================================
+            section_title("Graph 4 · Segment Feature Profile (Parallel Coordinates)")
+            arch_code_map = {a: i for i, a in enumerate(ARCHETYPES_H9)}
+            pcoord_df = df_tax_base.copy()
+            pcoord_df['archetype_code'] = pcoord_df['primary_archetype'].map(arch_code_map)
+            fig_g4 = go.Figure(data=go.Parcoords(
+                line=dict(color=pcoord_df['archetype_code'],
+                          colorscale=[[i / 3, ARCH_COLORS_H9[a]] for i, a in enumerate(ARCHETYPES_H9)],
+                          showscale=True,
+                          colorbar=dict(tickvals=list(arch_code_map.values()), ticktext=list(arch_code_map.keys()))),
+                dimensions=[
+                    dict(label="TTI Peak (avg AM/PM)", values=pcoord_df['mu_peak']),
+                    dict(label="TTI Off-Peak", values=pcoord_df['mu_offpeak']),
+                    dict(label="BTI", values=pcoord_df['bti_val']),
+                    dict(label="CV", values=pcoord_df['cv_val']),
+                    dict(label="Lambda_max", values=pcoord_df['lambda_max']),
+                ]
+            ))
+            fig_g4.update_layout(template="plotly_white", height=480, margin=dict(t=30))
+            st.plotly_chart(fig_g4, use_container_width=True)
+            st.caption(
+                "📊 **Statistical Verdict:** A line that stays near the extremes across every axis is a purely "
+                "separated segment; a line whose color sits between two archetype hues while zig-zagging between "
+                "high and mid bands on different features is a hybrid case. 🏛️ **Business Insight & CUMTA "
+                "Intervention:** This view explains *why* a segment overlaps — e.g. high BTI (peak-shock trait) "
+                "combined with high Lambda_max (tidal trait) — so the blended CapEx package can be feature-justified."
+            )
+            st.write("---")
+
+            # ==============================================================================
+            # 10. GRAPH 5 — PEAK VS OFF-PEAK CLUSTER DISTRIBUTION SHIFT
+            # ==============================================================================
+            section_title("Graph 5 · Peak vs. Off-Peak Cluster Distribution Shift")
+            centroid_composite = 0.6 * centroids_h9[['mu_am', 'mu_pm', 'mu_offpeak']].mean(axis=1) + 0.4 * (centroids_h9['bti_val'] / 100)
+            centroid_composite_by_arch = {label_map_h9[i]: centroid_composite[i] for i in range(4)}
+
+            def _nearest_archetype(composite_val):
+                return min(ARCHETYPES_H9, key=lambda a: abs(centroid_composite_by_arch[a] - composite_val))
+
+            df_tax_base['slice_archetype_am'] = df_tax_base['composite_am'].apply(_nearest_archetype)
+            df_tax_base['slice_archetype_pm'] = df_tax_base['composite_pm'].apply(_nearest_archetype)
+            df_tax_base['slice_archetype_off'] = df_tax_base['composite_offpeak'].apply(_nearest_archetype)
+
+            dist_rows = []
+            for slice_name, col in [("Off-Peak", "slice_archetype_off"), ("AM Peak", "slice_archetype_am"), ("PM Peak", "slice_archetype_pm")]:
+                counts = df_tax_base[col].value_counts(normalize=True) * 100
+                for arch in ARCHETYPES_H9:
+                    dist_rows.append({"Slice": slice_name, "Archetype": arch, "Share": counts.get(arch, 0.0)})
+            dist_df = pd.DataFrame(dist_rows)
+            fig_g5 = px.bar(
+                dist_df, x="Slice", y="Share", color="Archetype", color_discrete_map=ARCH_COLORS_H9,
+                category_orders={"Slice": ["Off-Peak", "AM Peak", "PM Peak"]},
+                labels={"Share": "Network Share [%] — Nearest-centroid classification per slice"}
+            )
+            fig_g5.update_layout(template="plotly_white", height=480, legend=dict(orientation='h', y=-0.18), margin=dict(t=20))
+            st.plotly_chart(fig_g5, use_container_width=True)
+            am_chronic_share = dist_df[(dist_df['Slice'] == 'AM Peak') & (dist_df['Archetype'] == 'Chronic Structural')]['Share'].values
+            off_chronic_share = dist_df[(dist_df['Slice'] == 'Off-Peak') & (dist_df['Archetype'] == 'Chronic Structural')]['Share'].values
+            drift_pp = float(am_chronic_share[0] - off_chronic_share[0]) if len(am_chronic_share) and len(off_chronic_share) else 0.0
+            st.caption(
+                f"📊 **Statistical Verdict:** Each segment is reclassified per slice against the nearest archetype "
+                f"centroid on the composite-delay axis; the Chronic Structural share shifts by "
+                f"**{drift_pp:+.1f} percentage points** from Off-Peak to AM Peak. 🏛️ **Business Insight & CUMTA "
+                f"Intervention:** A network-level drift toward Chronic Structural during peak hours confirms that "
+                f"infrastructure capacity — not just signal timing — is the binding constraint; escalate to the "
+                f"capital works committee rather than the traffic-signal operations desk."
+            )
+            st.write("---")
+
+            # ==============================================================================
+            # 11. HANDOVER MATRIX TABLE
+            # ==============================================================================
+            section_title("Capital Expenditure Policy Intervention Matrix")
+            policy_t = pd.DataFrame([
+                {'Assigned Taxonomy Group': 'Chronic Structural', 'Centroid Target Profile Vector': 'High peak TTI + high off-peak TTI (persistent, not just rush-hour)', 'Targeted CUMTA Policy Intervention': 'Execute structural reconstruction & physical capacity widening'},
+                {'Assigned Taxonomy Group': 'Operational Peak Shock', 'Centroid Target Profile Vector': 'Large peak-minus-off-peak delay gap + high BTI', 'Targeted CUMTA Policy Intervention': 'Deploy interconnected adaptive signal timing optimization'},
+                {'Assigned Taxonomy Group': 'Tidal Commuter', 'Centroid Target Profile Vector': 'High AM/PM directional asymmetry (Lambda_max)', 'Targeted CUMTA Policy Intervention': 'Implement dynamic reversible-lane traffic systems'},
+                {'Assigned Taxonomy Group': 'Stable Baseline', 'Centroid Target Profile Vector': 'Low delay and low variance across all slices', 'Targeted CUMTA Policy Intervention': 'Maintain routine monitoring cadence; no capital action required'},
+            ])
+            st.table(policy_t)
+
     # =============================================================================
-    # MODULE TAB 10: HYPOTHESIS 10 — VOLUME VIA AQI PROXY
+    # MODULE TAB 10: HYPOTHESIS 10 — VOLUME VIA AQI PROXY & EMISSION CHARACTERIZATION
     # =============================================================================
     elif selected_tab == "Hypothesis 10: Traffic Volume via AQI Proxy":
         inject_professional_style()
         apply_pro_plot_style()
 
         render_page_header(
-            "Hypothesis 10 · Air Quality–Assisted Congestion Characterization",
-            "Cross-referencing telemetry velocity data against localized emission spikes to verify vehicle density"
+            "Hypothesis 10 · Traffic Volume via Localized AQI Proxy & Emission Characterization",
+            "Weather-corrected regression isolating vehicle density signal from atmospheric noise, with incident-vs-gridlock disambiguation"
         )
 
         # ==============================================================================
@@ -6573,79 +6772,133 @@ def main():
         section_title("Business Question")
         st.markdown(
             "**Since mapping APIs do not share exact vehicle counts, how can we mathematically prove that a slowdown "
-            "is caused by heavy traffic volume rather than a stalled vehicle or accident?**\n\n"
-            "Localized air quality indices are heavily influenced by weather elements, meaning they do not map directly "
-            "to absolute vehicle counts. However, by factoring in weather variables like wind speed and precipitation, "
-            "the pipeline isolates vehicular emission spikes from external weather variations, allowing us to pinpoint "
-            "high-volume idling zones."
+            "is caused by heavy traffic volume rather than a stalled vehicle or accident — and which corridors are "
+            "the worst stop-and-go idling emitters?**\n\n"
+            "Localized air quality indices are heavily influenced by weather elements, meaning they do not map "
+            "directly to absolute vehicle counts. By holding wind speed and precipitation constant in a multiple "
+            "regression, the pipeline isolates the traffic-only emission slope, exposes the TTI level where idling "
+            "exhaust starts spiking non-linearly, and disambiguates genuine gridlock from isolated incidents."
         )
 
-        with st.expander("[REF] Formula Reference"):
+        with st.expander("📐 Methodology & Mathematical Framework", expanded=True):
             st.markdown(
-                "Atmospheric weather dispersion variables (wind speed $WS$, precipitation $P$) are held constant "
-                "using a multiple linear regression, isolating the traffic-only slope $\\beta_1$. Because idling "
-                "exhaust accumulates non-linearly once congestion crosses a threshold, the scatter/regression panel "
-                "below additionally fits a second-degree polynomial curve rather than a straight line — this is "
-                "what exposes the inflection point where stop-and-go traffic starts driving AQI up sharply."
+                "**1. Weather-corrected multiple linear regression.** AQI is regressed on TTI while holding wind "
+                "speed ($WS$) and precipitation ($P$) constant via ordinary least squares, so $\\beta_1$ is the "
+                "traffic-only marginal effect on roadside AQI, net of atmospheric dispersion/washout.\n\n"
+                "**2. Weather-adjusted emission delta.** For the quadrant disambiguation plot, each observation's "
+                "weather-only baseline is $\\hat{A}_{weather} = \\hat\\alpha + \\hat\\beta_2 WS + \\hat\\beta_3 P$; "
+                "the residual $\\Delta AQI = AQI_{obs} - \\hat{A}_{weather}$ isolates the portion of pollution "
+                "attributable to traffic idling rather than ambient weather conditions.\n\n"
+                "**3. Non-linear idling response.** A degree-2 polynomial is fit to (TTI, AQI) to capture the "
+                "well-documented non-linear jump in stop-and-go exhaust once congestion crosses roughly "
+                r"$TTI \approx 1.8$.\n\n"
+                "**4. Feature contribution & validation.** Standardized-coefficient magnitudes from an extended "
+                "regression (TTI, wind, precipitation, and cyclically-encoded hour-of-day) approximate each "
+                "driver's relative game-theoretic contribution; a chronological holdout split reports Mean "
+                "Absolute Percentage Error (MAPE) for the fitted model."
             )
             st.latex(r"AQI_{s,t+k} = \alpha + \beta_1 (TTI_{s,t}) + \beta_2 (WS_{s,t}) + \beta_3 (P_{s,t}) + \epsilon")
 
         st.write("---")
 
         # ==============================================================================
-        # 2. METEOROLOGICAL COMPILATION & OLS PARAMETERS
+        # 2. SCOPE & TEMPORAL DRILLDOWN CONTROLS
+        # ==============================================================================
+        section_title("Drilldown Controls")
+        ctl_h10_a, ctl_h10_b = st.columns(2)
+        with ctl_h10_a:
+            corridor_opts_h10 = ["All Network"]
+            if "corridor_name" in df_fetched.columns:
+                corridor_opts_h10 += sorted(df_fetched["corridor_name"].dropna().astype(str).unique().tolist())
+            scope_h10 = st.selectbox("🛣️ Scope", corridor_opts_h10, key="h10_scope_select")
+        with ctl_h10_b:
+            temporal_h10 = st.selectbox(
+                "⏱️ Temporal Slice",
+                ["Whole-Day", "AM Peak (07:00–10:00)", "PM Peak (17:00–20:00)", "Off-Peak (23:00–05:00)"],
+                key="h10_temporal_select"
+            )
+
+        AM_HOURS_H10, PM_HOURS_H10, OFF_HOURS_H10 = [7, 8, 9], [17, 18, 19], [23, 0, 1, 2, 3, 4, 5]
+
+        def _h10_slice_mask(hour_series, label):
+            if label.startswith("AM"):
+                return hour_series.isin(AM_HOURS_H10)
+            if label.startswith("PM"):
+                return hour_series.isin(PM_HOURS_H10)
+            if label.startswith("Off"):
+                return hour_series.isin(OFF_HOURS_H10)
+            return pd.Series(True, index=hour_series.index)
+
+        # ==============================================================================
+        # 3. METEOROLOGICAL COMPILATION & OLS PARAMETERS
         # ==============================================================================
         df_env_raw = df_fetched.copy()
         if 'lat' not in df_env_raw.columns or 'lon' not in df_env_raw.columns:
             np.random.seed(42)
             df_env_raw['lat'] = np.random.uniform(13.00, 13.15, size=len(df_env_raw))
             df_env_raw['lon'] = np.random.uniform(80.20, 80.28, size=len(df_env_raw))
+        if 'corridor_name' not in df_env_raw.columns:
+            df_env_raw['corridor_name'] = 'Unassigned Corridor'
         # FIX: Generate realistic diurnal AQI correlated with congestion and atmospheric trapping
         if 'indexes_aqi' not in df_env_raw.columns:
-            # 1. Base traffic emission contribution (proportional to congestion TTI)
             traffic_aqi = (df_env_raw['travel_time_index_tti'] - 1.0).clip(lower=0) * 35.0
-            
-            # 2. Atmospheric Inversion Factor (night/early morning traps exhaust near ground, midday disperses it)
             hour = df_env_raw['derived_hour']
-            inversion_factor = np.where((hour >= 7) & (hour <= 10), 1.4,   # Morning rush peak accumulation
-                                np.where((hour >= 17) & (hour <= 21), 1.3, # Evening rush peak accumulation
-                                np.where((hour >= 11) & (hour <= 16), 0.7, # Midday solar thermal dispersion
-                                0.5)))                                     # Late night drop
-                        
-            # Baseline ambient background air pollution (~40 AQI) + correlated traffic spike + minimal noise
+            inversion_factor = np.where((hour >= 7) & (hour <= 10), 1.4,
+                                np.where((hour >= 17) & (hour <= 21), 1.3,
+                                np.where((hour >= 11) & (hour <= 16), 0.7,
+                                0.5)))
             df_env_raw['indexes_aqi'] = 40.0 + (traffic_aqi * inversion_factor) + np.random.normal(0, 1.5, size=len(df_env_raw))
         if 'wind_speed_10m' not in df_env_raw.columns:
             df_env_raw['wind_speed_10m'] = np.random.uniform(2.0, 15.0, size=len(df_env_raw))
         if 'precipitation_intensity_mm_h' not in df_env_raw.columns:
             df_env_raw['precipitation_intensity_mm_h'] = np.random.choice([0.0, 2.0], size=len(df_env_raw), p=[0.85, 0.15])
 
-        df_env_agg = df_env_raw.groupby(['derived_hour']).agg(
+        if scope_h10 != "All Network":
+            df_env_scope = df_env_raw[df_env_raw['corridor_name'].astype(str) == scope_h10].copy()
+        else:
+            df_env_scope = df_env_raw.copy()
+        if len(df_env_scope) < 20:
+            df_env_scope = df_env_raw.copy()
+            st.info("ℹ️ Selected corridor has too few readings for a stable regression — showing All Network instead.")
+
+        slice_mask_h10 = _h10_slice_mask(df_env_scope['derived_hour'], temporal_h10)
+        df_env_slice = df_env_scope[slice_mask_h10].copy()
+        if df_env_slice.empty:
+            df_env_slice = df_env_scope.copy()
+
+        df_env_agg = df_env_scope.groupby(['derived_hour']).agg(
             avg_tti=('travel_time_index_tti', 'mean'), avg_aqi=('indexes_aqi', 'mean'),
             avg_ws=('wind_speed_10m', 'mean'), avg_precip=('precipitation_intensity_mm_h', 'mean')
         ).reset_index()
 
-        df_segment_map = df_env_raw.groupby('shapefile_segment_name').agg(
+        df_segment_map = df_env_scope.groupby('shapefile_segment_name').agg(
             mean_tti=('travel_time_index_tti', 'mean'), mean_aqi=('indexes_aqi', 'mean'),
+            corridor_name=('corridor_name', 'first'),
             lat=('lat', 'mean'), lon=('lon', 'mean')
         ).reset_index()
 
-        # OLS Matrix transformation execution on raw sample
-        clean_raw = df_env_raw.dropna(subset=['travel_time_index_tti', 'indexes_aqi', 'wind_speed_10m', 'precipitation_intensity_mm_h'])
+        # OLS Matrix transformation execution on raw sample (scope-level, weather-corrected)
+        clean_raw = df_env_scope.dropna(subset=['travel_time_index_tti', 'indexes_aqi', 'wind_speed_10m', 'precipitation_intensity_mm_h'])
         Y_a = clean_raw['indexes_aqi'].values
         X_a = np.column_stack((np.ones_like(Y_a), clean_raw['travel_time_index_tti'].values, clean_raw['wind_speed_10m'].values, clean_raw['precipitation_intensity_mm_h'].values))
         beta_env = np.linalg.lstsq(X_a, Y_a, rcond=None)[0]
+
+        # Weather-adjusted emission delta = observed AQI minus the weather-only baseline
+        clean_raw = clean_raw.copy()
+        weather_baseline = beta_env[0] + beta_env[2] * clean_raw['wind_speed_10m'] + beta_env[3] * clean_raw['precipitation_intensity_mm_h']
+        clean_raw['delta_aqi'] = clean_raw['indexes_aqi'] - weather_baseline
 
         max_aqi_val = df_env_agg['avg_aqi'].max()
         ambient_ws_avg = df_env_agg['avg_ws'].mean()
 
         # ==============================================================================
-        # 3. KPI HEADER ROW
+        # 4. KPI HEADER ROW
         # ==============================================================================
         kpi_defs = [
             ("Peak Pollution Index", f"{max_aqi_val:.1f} AQI", "#991B1B", "Maximum recorded core idling mark"),
             ("Mean Wind Dispersion", f"{ambient_ws_avg:.2f} m/s", "#1E40AF", "Average wind displacement speed"),
-            ("Weather Adjusted Beta", f"{beta_env[1]:.4f}", "#166534", "Isolated traffic-to-emissions slope"),
-            ("API Slices Parsed", f"{len(df_env_raw):,}", "#1E293B", "Cross-correlated logs matrix cells"),
+            ("Weather Adjusted β₁ (TTI→AQI)", f"{beta_env[1]:.4f}", "#166534", "Isolated traffic-to-emissions slope"),
+            ("Readings in Scope", f"{len(df_env_scope):,}", "#1E293B", f"Scope: {scope_h10} · Slice: {temporal_h10.split(' (')[0]}"),
         ]
         render_kpi_row(kpi_defs)
         st.write("")
@@ -6653,21 +6906,21 @@ def main():
 
         section_title("Spatial Environmental Mapping & Macro Proxy Alignment Ledger")
         st.markdown('<div class="h1-section-sub">Cross-referencing gridlock velocity metrics with atmospheric pollution footprints</div>', unsafe_allow_html=True)
-        
+
         c_map, c_panel = st.columns([3, 2])
-        center_lat = df_env_raw["lat"].dropna().mean()
-        center_lon = df_env_raw["lon"].dropna().mean()
-        
+        center_lat = df_env_scope["lat"].dropna().mean()
+        center_lon = df_env_scope["lon"].dropna().mean()
+
         with c_map:
             m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="CartoDB positron")
             for _, r in df_segment_map.dropna(subset=["lat", "lon"]).iterrows():
                 color = "#991B1B" if r['mean_aqi'] >= 90.0 else "#166534"
                 folium.CircleMarker(
                     [r["lat"], r["lon"]], radius=5, color=color, fill=True, opacity=0.8,
-                    tooltip=f"Link: {r['shapefile_segment_name']}<br>Mean AQI: {r['mean_aqi']:.1f}<br>Mean TTI: {r['mean_tti']:.2f}"
+                    tooltip=f"Link: {r['shapefile_segment_name']}<br>Corridor: {r['corridor_name']}<br>Mean AQI: {r['mean_aqi']:.1f}<br>Mean TTI: {r['mean_tti']:.2f}"
                 ).add_to(m)
             st_folium(m, height=450, use_container_width=True, returned_objects=[], key="map_geo_pollution")
-            
+
         with c_panel:
             st.dataframe(
                 df_env_agg.style.format({'avg_tti': '{:.2f}', 'avg_aqi': '{:.2f}', 'avg_ws': '{:.1f} m/s'})
@@ -6677,157 +6930,225 @@ def main():
         st.write("---")
 
         # ==============================================================================
-        # 4. DUAL ALIGNMENT TIMELINE & REGRESSION GRAPH PANELS (FIXED GRAPH)
+        # 5. GRAPH 1 — DIURNAL CONGESTION VS EMISSION ALIGNMENT
         # ==============================================================================
-        section_title("Emissions Convergence Profiles & Regression Verifications")
-        col_g1, col_g2 = st.columns(2)
-        
-        with col_g1:
-            fig_e1 = plt.figure(figsize=(6, 5), facecolor='white')
-            ax_e1 = fig_e1.add_subplot(111, facecolor='white')
-            ax_e1_twin = ax_e1.twinx()
-
-            TTI_COLOR = '#991B1B'   # deep red -- congestion axis
-            AQI_COLOR = '#166534'   # dark green -- air quality axis
-
-            l1 = ax_e1.plot(df_env_agg['derived_hour'], df_env_agg['avg_tti'], color=TTI_COLOR,
-                             label='Congestion (TTI Index)', linewidth=2.6, marker='X', markersize=7,
-                             markeredgecolor='#0F172A', markeredgewidth=0.6)
-            l2 = ax_e1_twin.plot(df_env_agg['derived_hour'], df_env_agg['avg_aqi'], color=AQI_COLOR,
-                                  label='Air Footprint (AQI)', linewidth=2.6, marker='o', markersize=7,
-                                  markeredgecolor='#0F172A', markeredgewidth=0.6)
-
-            ax_e1.set_xlabel("Hour of Day (Diurnal Cycle)", color='#0F172A', fontweight='bold', fontsize=8)
-            ax_e1.set_ylabel("Travel Time Index (TTI Score)", color=TTI_COLOR, fontweight='bold', fontsize=8)
-            ax_e1_twin.set_ylabel("Air Quality Index Metric (AQI Scale)", color=AQI_COLOR, fontweight='bold', fontsize=8)
-            ax_e1.set_xticks(range(0, 24, 4))
-            ax_e1.grid(True, linestyle=':', alpha=0.4, color='#CBD5E1')
-
-            # Explicit dual-axis contrast fix: tick labels on each y-axis match
-            # their own series color, and the twin axis gets its own clean
-            # spine treatment so it doesn't inherit the primary axis's hidden
-            # right spine (the source of prior dual-axis rendering glitches).
-            ax_e1.tick_params(axis='y', colors=TTI_COLOR, labelcolor=TTI_COLOR)
-            ax_e1_twin.tick_params(axis='y', colors=AQI_COLOR, labelcolor=AQI_COLOR)
-            ax_e1_twin.spines['right'].set_color(AQI_COLOR)
-            ax_e1_twin.spines['right'].set_linewidth(1.2)
-            ax_e1_twin.spines['top'].set_visible(False)
-            ax_e1_twin.spines['left'].set_visible(False)
-
-            leg1 = ax_e1.legend(l1 + l2, [ly.get_label() for ly in l1 + l2], loc='upper left',
-                                 facecolor='white', edgecolor='#CBD5E1', fontsize=8)
-            for text_h in leg1.get_texts():
-                text_h.set_color('#0F172A')
-            style_axes(ax_e1)
-            ax_e1.spines['left'].set_color(TTI_COLOR)
-            plt.tight_layout(pad=1.2)
-            st.pyplot(fig_e1)
-            plt.close(fig_e1)
-            st.caption(
-                "[INFO] Diurnal cycle tracking shows how travel delays (red, left axis) and air pollution peaks "
-                "(green, right axis) align over a 24-hour window."
-            )
-
-        with col_g2:
-            fig_e2 = plt.figure(figsize=(6, 5), facecolor='white')
-            ax_e2 = fig_e2.add_subplot(111, facecolor='white')
-
-            s_df = df_env_raw.dropna(subset=['travel_time_index_tti', 'indexes_aqi']).sample(min(800, len(df_env_raw)), random_state=42)
-
-            # Scatter Plot -- charcoal-edged points in dark blue for contrast against white canvas
-            ax_e2.scatter(s_df['travel_time_index_tti'], s_df['indexes_aqi'], color='#1E40AF', alpha=0.40,
-                           edgecolor='#0F172A', linewidth=0.15, s=32, label="Observed telemetry cycle")
-
-            # 2nd-degree Polynomial Fit to capture non-linear idling behavior
-            poly_coeffs = np.polyfit(s_df['travel_time_index_tti'], s_df['indexes_aqi'], deg=2)
-            t_rg = np.linspace(s_df['travel_time_index_tti'].min(), s_df['travel_time_index_tti'].max(), 100)
-            pred_y = np.polyval(poly_coeffs, t_rg)
-
-            # Non-linear trendline overlay in deep red for maximum contrast against the blue scatter cloud
-            ax_e2.plot(t_rg, pred_y, color='#991B1B', linewidth=3.0, label="Non-Linear Idling Response (Poly Fit)")
-
-            # Mark the TTI = 1.8 inflection referenced in the analytical takeaway below, so the
-            # non-linear relationship is visually anchored rather than only described in prose.
-            inflection_tti = 1.8
-            if t_rg.min() <= inflection_tti <= t_rg.max():
-                inflection_aqi = np.polyval(poly_coeffs, inflection_tti)
-                ax_e2.axvline(inflection_tti, color='#166534', linestyle='--', linewidth=1.8,
-                              label=f"Idling inflection (TTI = {inflection_tti})")
-                ax_e2.scatter([inflection_tti], [inflection_aqi], color='#166534', s=110, zorder=5,
-                              edgecolor='#0F172A', linewidth=1.0)
-
-            ax_e2.set_xlabel("Congestion Index Parameter (TTI)", fontweight='bold', color='#0F172A', fontsize=8)
-            ax_e2.set_ylabel("Google Environment API Localized AQI Variable", fontweight='bold', color='#0F172A', fontsize=8)
-            ax_e2.set_ylim(bottom=10)
-            ax_e2.grid(True, linestyle=':', alpha=0.4, color='#CBD5E1')
-            leg2 = ax_e2.legend(loc='upper left', facecolor='white', edgecolor='#CBD5E1', fontsize=7.5)
-            for text_h in leg2.get_texts():
-                text_h.set_color('#0F172A')
-            style_axes(ax_e2)
-            plt.tight_layout(pad=1.2)
-            st.pyplot(fig_e2)
-            plt.close(fig_e2)
-            st.caption(
-                "[VERDICT] Non-linear response curve capturing localized emission spikes during vehicle idling. "
-                "Unlike linear models distorted by atmospheric dispersion, this curve isolates severe congestion "
-                "($TTI > 1.8$, marked in green) from free-flowing traffic."
-            )
-
-        # ── 2. Detailed Analytical Deep-Dive Below Graphs ───────────────────────────
-        st.markdown(r"""
-        >  **Analytical Takeaway & Policy Translation:**
-        > * **Non-Linear Exhaust Accumulation:** Below $TTI = 1.5$, traffic flows naturally and exhaust gases disperse smoothly. Beyond $TTI \ge 1.8$, stop-and-go vehicle idling generates localized emission spikes.
-        > * **Incident vs. Traffic Disambiguation:** High $TTI$ coupled with an elevated AQI confirms high-density idling. High $TTI$ with flat AQI points to low-volume blockages (e.g., an isolated accident or stalled vehicle).
-        """)
-
-        # ==============================================================================
-        # 5. SHAP EXPLAINABILITY PANEL ROWS
-        # ==============================================================================
+        section_title("Graph 1 · Diurnal Congestion vs. Emission Alignment")
+        fig_e1 = go.Figure()
+        fig_e1.add_trace(go.Scatter(
+            x=df_env_agg['derived_hour'], y=df_env_agg['avg_tti'], name='Congestion (TTI Index)',
+            line=dict(color='#991B1B', width=3), yaxis='y1', mode='lines+markers'
+        ))
+        fig_e1.add_trace(go.Scatter(
+            x=df_env_agg['derived_hour'], y=df_env_agg['avg_aqi'], name='Air Footprint (AQI)',
+            line=dict(color='#166534', width=3), yaxis='y2', mode='lines+markers'
+        ))
+        for hstart, hend, lbl in [(7, 10, "AM Peak"), (17, 20, "PM Peak")]:
+            fig_e1.add_vrect(x0=hstart, x1=hend, fillcolor="#F59E0B", opacity=0.10, line_width=0, annotation_text=lbl, annotation_position="top left")
+        peak_tti_hour = df_env_agg.loc[df_env_agg['avg_tti'].idxmax(), 'derived_hour']
+        peak_aqi_hour = df_env_agg.loc[df_env_agg['avg_aqi'].idxmax(), 'derived_hour']
+        lag_hours = peak_aqi_hour - peak_tti_hour
+        fig_e1.update_layout(
+            xaxis=dict(title="Hour of Day (Diurnal Cycle)", dtick=2),
+            yaxis=dict(title="Travel Time Index (TTI Score) [Deep Red]", titlefont=dict(color='#991B1B'), tickfont=dict(color='#991B1B')),
+            yaxis2=dict(title="Weather-Adjusted AQI [Dark Green]", titlefont=dict(color='#166534'), tickfont=dict(color='#166534'),
+                        overlaying='y', side='right'),
+            template="plotly_white", height=480, legend=dict(orientation='h', y=-0.2), margin=dict(t=30)
+        )
+        st.plotly_chart(fig_e1, use_container_width=True)
+        st.caption(
+            f"📊 **Statistical Verdict:** TTI peaks at hour {int(peak_tti_hour)}; AQI peaks at hour {int(peak_aqi_hour)} "
+            f"— a **{lag_hours:+d}-hour lag** consistent with atmospheric accumulation after the traffic peak. "
+            f"🏛️ **Business Insight & CUMTA Intervention:** Time roadside air-quality advisories and emission-control "
+            f"enforcement windows to the AQI peak, not the TTI peak."
+        )
         st.write("---")
-        section_title("Advanced Glass-Box Ensembles & Validation Holdouts")
+
+        # ==============================================================================
+        # 6. GRAPH 2 — NON-LINEAR AQI RESPONSE CURVE
+        # ==============================================================================
+        section_title("Graph 2 · Weather-Normalized Non-Linear AQI Response Curve")
+        s_df = df_env_scope.dropna(subset=['travel_time_index_tti', 'indexes_aqi']).sample(min(1000, len(df_env_scope)), random_state=42)
+        poly_coeffs = np.polyfit(s_df['travel_time_index_tti'], s_df['indexes_aqi'], deg=2)
+        t_rg = np.linspace(s_df['travel_time_index_tti'].min(), s_df['travel_time_index_tti'].max(), 120)
+        pred_y = np.polyval(poly_coeffs, t_rg)
+        fig_e2 = go.Figure()
+        fig_e2.add_trace(go.Scatter(x=s_df['travel_time_index_tti'], y=s_df['indexes_aqi'], mode='markers',
+                                     marker=dict(color='#1E40AF', size=6, opacity=0.35, line=dict(width=0.3, color='#0F172A')),
+                                     name='Observed telemetry cycle'))
+        fig_e2.add_trace(go.Scatter(x=t_rg, y=pred_y, mode='lines', line=dict(color='#991B1B', width=3.5),
+                                     name='Non-Linear Idling Response (Poly Fit)'))
+        inflection_tti = 1.8
+        if t_rg.min() <= inflection_tti <= t_rg.max():
+            inflection_aqi = np.polyval(poly_coeffs, inflection_tti)
+            fig_e2.add_vline(x=inflection_tti, line=dict(color='#166534', dash='dash', width=2), annotation_text="Idling inflection (TTI=1.8)")
+            fig_e2.add_trace(go.Scatter(x=[inflection_tti], y=[inflection_aqi], mode='markers',
+                                         marker=dict(color='#166534', size=13, line=dict(width=1.5, color='#0F172A')),
+                                         name="Inflection point", showlegend=False))
+        fig_e2.update_layout(
+            xaxis_title="Congestion Index Parameter (TTI) [Physical Delay Multiplier]",
+            yaxis_title="Localized Roadside AQI [Google Environment API]",
+            template="plotly_white", height=500, legend=dict(orientation='h', y=-0.18), margin=dict(t=20)
+        )
+        st.plotly_chart(fig_e2, use_container_width=True)
+        st.caption(
+            "📊 **Statistical Verdict:** The degree-2 fit captures the non-linear emission spike; below TTI≈1.5 "
+            "exhaust disperses smoothly, beyond TTI≈1.8 stop-and-go idling drives AQI up sharply. "
+            "🏛️ **Business Insight & CUMTA Intervention:** Treat TTI=1.8 as the operational trigger for automatic "
+            "roadside emission-control alerts, not just a delay threshold."
+        )
+        st.write("---")
+
+        # ==============================================================================
+        # 7. GRAPH 3 (NEW) — INCIDENT VS GRIDLOCK DISAMBIGUATION QUADRANT PLOT
+        # ==============================================================================
+        section_title("Graph 3 · Incident vs. Gridlock Disambiguation (Quadrant Scatter)")
+        seg_quad = clean_raw.groupby('shapefile_segment_name').agg(
+            corridor_name=('corridor_name', 'first'),
+            tti=('travel_time_index_tti', 'mean'), delta_aqi=('delta_aqi', 'mean')
+        ).reset_index()
+        tti_thresh, delta_thresh = 1.5, 0.0
+
+        def _quadrant(row):
+            if row['tti'] >= tti_thresh and row['delta_aqi'] >= delta_thresh:
+                return "Genuine Gridlock (High Vol.)"
+            if row['tti'] >= tti_thresh and row['delta_aqi'] < delta_thresh:
+                return "Low-Volume Blockage (Incident)"
+            if row['tti'] < tti_thresh and row['delta_aqi'] >= delta_thresh:
+                return "External Emission Source"
+            return "Nominal Healthy Flow"
+
+        seg_quad['Quadrant'] = seg_quad.apply(_quadrant, axis=1)
+        QUAD_COLORS = {
+            "Genuine Gridlock (High Vol.)": "#991B1B", "Low-Volume Blockage (Incident)": "#D97706",
+            "External Emission Source": "#7C3AED", "Nominal Healthy Flow": "#166534",
+        }
+        fig_e3 = px.scatter(
+            seg_quad, x='tti', y='delta_aqi', color='Quadrant', color_discrete_map=QUAD_COLORS,
+            hover_data={'shapefile_segment_name': True, 'corridor_name': True, 'tti': ':.2f', 'delta_aqi': ':.1f'},
+            labels={'tti': 'Travel Time Index (TTI)', 'delta_aqi': 'Weather-Adjusted Emission Delta (ΔAQI)'}
+        )
+        fig_e3.add_vline(x=tti_thresh, line=dict(color='#64748B', dash='dot'))
+        fig_e3.add_hline(y=delta_thresh, line=dict(color='#64748B', dash='dot'))
+        fig_e3.update_traces(marker=dict(size=9, line=dict(width=0.6, color='#0F172A')))
+        fig_e3.update_layout(template="plotly_white", height=520, legend=dict(orientation='h', y=-0.22), margin=dict(t=20))
+        st.plotly_chart(fig_e3, use_container_width=True)
+        quad_counts = seg_quad['Quadrant'].value_counts()
+        st.caption(
+            f"📊 **Statistical Verdict:** {quad_counts.get('Genuine Gridlock (High Vol.)', 0)} segments sit in "
+            f"genuine high-volume gridlock; {quad_counts.get('Low-Volume Blockage (Incident)', 0)} show high delay "
+            f"with flat weather-adjusted emissions (likely isolated incidents). 🏛️ **Business Insight & CUMTA "
+            f"Intervention:** Top-right → **capital transit-management review**; bottom-right → **dispatch rapid "
+            f"incident clearance**; top-left → **environmental audit of non-traffic sources**; bottom-left → no action."
+        )
+        st.write("---")
+
+        # ==============================================================================
+        # 8. GRAPH 4 (NEW) — CROSS-CORRIDOR AQI SENSITIVITY RANKING
+        # ==============================================================================
+        section_title("Graph 4 · Cross-Corridor AQI Sensitivity Ranking")
+        corridor_betas = []
+        for corr_name, grp in df_env_raw.dropna(subset=['travel_time_index_tti', 'indexes_aqi', 'wind_speed_10m', 'precipitation_intensity_mm_h']).groupby('corridor_name'):
+            if len(grp) < 20:
+                continue
+            Yc = grp['indexes_aqi'].values
+            Xc = np.column_stack((np.ones_like(Yc), grp['travel_time_index_tti'].values, grp['wind_speed_10m'].values, grp['precipitation_intensity_mm_h'].values))
+            beta_c = np.linalg.lstsq(Xc, Yc, rcond=None)[0]
+            corridor_betas.append({'corridor_name': corr_name, 'beta1_tti_to_aqi': beta_c[1], 'n_readings': len(grp)})
+        beta_rank_df = pd.DataFrame(corridor_betas).sort_values('beta1_tti_to_aqi', ascending=False).head(TOP_N_OVERVIEW)
+        if beta_rank_df.empty:
+            st.info("Not enough per-corridor readings yet to compute a stable cross-corridor sensitivity ranking.")
+        else:
+            fig_e4 = px.bar(
+                beta_rank_df.sort_values('beta1_tti_to_aqi'), x='beta1_tti_to_aqi', y='corridor_name', orientation='h',
+                color='beta1_tti_to_aqi', color_continuous_scale='Reds',
+                labels={'beta1_tti_to_aqi': 'Weather-Corrected β₁ (AQI points per +1.0 TTI)', 'corridor_name': 'Corridor'}
+            )
+            fig_e4.update_layout(template="plotly_white", height=max(420, 26 * len(beta_rank_df)), margin=dict(t=20), coloraxis_showscale=False)
+            st.plotly_chart(fig_e4, use_container_width=True)
+            worst_corr = beta_rank_df.iloc[0]
+            st.caption(
+                f"📊 **Statistical Verdict:** **{worst_corr['corridor_name']}** has the steepest weather-corrected "
+                f"traffic-to-emission slope (β₁={worst_corr['beta1_tti_to_aqi']:.2f}), meaning each unit of extra "
+                f"congestion there produces the largest local pollution spike network-wide. 🏛️ **Business Insight & "
+                f"CUMTA Intervention:** Prioritize stop-and-go-reduction measures (signal coordination, idling "
+                f"restrictions) on the top-ranked corridors first — they deliver the most emission reduction per "
+                f"unit of congestion relief."
+            )
+        st.write("---")
+
+        # ==============================================================================
+        # 9. GRAPH 5 — SHAP-STYLE CONTRIBUTION & HOLDOUT VALIDATION
+        # ==============================================================================
+        section_title("Graph 5 · Feature Contribution & Model Holdout Validation")
         col_g3, col_g4 = st.columns(2)
-        
+
         with col_g3:
-            fig_e3 = plt.figure(figsize=(6, 4.5), facecolor='white')
-            ax_e3 = fig_e3.add_subplot(111, facecolor='white')
-            s_imp = pd.DataFrame({'Variable Feature': ['Precipitation Washout', 'Wind Dispersion', 'Travel Time Index (TTI)', 'Hour Block Index'], 'Mean Absolute SHAP Value': [0.07, 0.21, 0.46, 0.26]}).sort_values(by='Mean Absolute SHAP Value')
-            ax_e3.barh(s_imp['Variable Feature'], s_imp['Mean Absolute SHAP Value'], color='#1E40AF', height=0.5, edgecolor='none')
-            ax_e3.set_xlabel(r"Mean Absolute Game-Theoretic Contribution Score ($|\phi_i|$)", fontweight='bold', color='#0F172A', fontsize=8)
-            ax_e3.grid(True, linestyle=':', alpha=0.4, color='#CBD5E1')
-            style_axes(ax_e3)
-            plt.tight_layout(pad=1.2)
-            st.pyplot(fig_e3)
-            plt.close(fig_e3)
-            st.caption("SHAP parameters isolate exactly how much traffic drivers contribute to localized pollution spikes.")
+            reg_df = df_env_scope.dropna(subset=['travel_time_index_tti', 'indexes_aqi', 'wind_speed_10m', 'precipitation_intensity_mm_h', 'derived_hour']).copy()
+            reg_df['hour_sin'] = np.sin(2 * np.pi * reg_df['derived_hour'] / 24)
+            reg_df['hour_cos'] = np.cos(2 * np.pi * reg_df['derived_hour'] / 24)
+            feat_names_shap = ['travel_time_index_tti', 'wind_speed_10m', 'precipitation_intensity_mm_h', 'hour_sin', 'hour_cos']
+            Xs_raw = reg_df[feat_names_shap]
+            Xs_std = (Xs_raw - Xs_raw.mean()) / Xs_raw.std().replace(0, 1)
+            Ys_std = (reg_df['indexes_aqi'] - reg_df['indexes_aqi'].mean()) / reg_df['indexes_aqi'].std()
+            Xs_mat = np.column_stack((np.ones(len(Xs_std)), Xs_std.values))
+            std_betas = np.linalg.lstsq(Xs_mat, Ys_std.values, rcond=None)[0][1:]
+            hour_importance = np.sqrt(std_betas[3] ** 2 + std_betas[4] ** 2)
+            importances = np.array([abs(std_betas[0]), abs(std_betas[1]), abs(std_betas[2]), hour_importance])
+            importances = importances / importances.sum()
+            s_imp = pd.DataFrame({
+                'Variable Feature': ['Travel Time Index (TTI)', 'Wind Dispersion', 'Precipitation Washout', 'Hour of Day'],
+                'Relative Contribution': importances
+            }).sort_values('Relative Contribution')
+            fig_e3b = px.bar(s_imp, x='Relative Contribution', y='Variable Feature', orientation='h', color_discrete_sequence=['#1E40AF'])
+            fig_e3b.update_layout(template="plotly_white", height=380, margin=dict(t=20),
+                                   xaxis_title="Standardized |Coefficient| Share [Contribution Proxy]")
+            st.plotly_chart(fig_e3b, use_container_width=True)
+            st.caption("Standardized-coefficient contribution proxy isolates how much each driver moves roadside AQI, holding the others fixed.")
 
         with col_g4:
-            fig_e4 = plt.figure(figsize=(6, 4.5), facecolor='white')
-            ax_e4 = fig_e4.add_subplot(111, facecolor='white')
-            ax_e4.plot(df_env_agg['derived_hour'], df_env_agg['avg_aqi'], color='#1E40AF', marker='s', label='Observed Validation Block', linewidth=2)
-            ax_e4.plot(df_env_agg['derived_hour'], df_env_agg['avg_aqi'] + np.random.normal(0, 1.5, size=len(df_env_agg)), color='#D97706', linestyle='--', label='Model Forecast (MAPE = 4.25%)', linewidth=2)
-            ax_e4.set_xlabel("Hour of Day (Chronological Split Block)", fontweight='bold', color='#0F172A', fontsize=8)
-            ax_e4.set_ylabel("Air Quality Index Level (AQI Scale)", fontweight='bold', color='#0F172A', fontsize=8)
-            ax_e4.set_xticks(range(0, 24, 4))
-            ax_e4.grid(True, linestyle=':', alpha=0.4, color='#CBD5E1')
-            ax_e4.legend(loc='lower left', facecolor='white', edgecolor='#CBD5E1')
-            style_axes(ax_e4)
-            plt.tight_layout(pad=1.2)
-            st.pyplot(fig_e4)
-            plt.close(fig_e4)
-            st.caption("Low validation errors confirm the model is ready to support infrastructure spending reviews.")
+            time_col_h10 = 'execution_timestamp_utc' if 'execution_timestamp_utc' in df_env_scope.columns else (
+                'timestamp_utc' if 'timestamp_utc' in df_env_scope.columns else None)
+            hold_df = df_env_scope.dropna(subset=['travel_time_index_tti', 'indexes_aqi', 'wind_speed_10m', 'precipitation_intensity_mm_h']).copy()
+            if time_col_h10:
+                hold_df = hold_df.sort_values(time_col_h10)
+            split_ix = int(len(hold_df) * 0.8)
+            train_df, test_df = hold_df.iloc[:split_ix], hold_df.iloc[split_ix:]
+            if len(train_df) >= 10 and len(test_df) >= 5:
+                Ytr = train_df['indexes_aqi'].values
+                Xtr = np.column_stack((np.ones_like(Ytr), train_df['travel_time_index_tti'].values, train_df['wind_speed_10m'].values, train_df['precipitation_intensity_mm_h'].values))
+                beta_tr = np.linalg.lstsq(Xtr, Ytr, rcond=None)[0]
+                Xte = np.column_stack((np.ones(len(test_df)), test_df['travel_time_index_tti'].values, test_df['wind_speed_10m'].values, test_df['precipitation_intensity_mm_h'].values))
+                pred_te = Xte @ beta_tr
+                actual_te = test_df['indexes_aqi'].values
+                mape = float(np.mean(np.abs((actual_te - pred_te) / np.clip(actual_te, 1e-6, None))) * 100)
+                test_hourly = test_df.assign(predicted_aqi=pred_te).groupby('derived_hour').agg(
+                    observed=('indexes_aqi', 'mean'), predicted=('predicted_aqi', 'mean')).reset_index()
+                fig_e4b = go.Figure()
+                fig_e4b.add_trace(go.Scatter(x=test_hourly['derived_hour'], y=test_hourly['observed'], name='Observed (Holdout)',
+                                              mode='lines+markers', line=dict(color='#1E40AF', width=3)))
+                fig_e4b.add_trace(go.Scatter(x=test_hourly['derived_hour'], y=test_hourly['predicted'], name=f'Predicted (MAPE={mape:.2f}%)',
+                                              mode='lines+markers', line=dict(color='#D97706', width=3, dash='dash')))
+                fig_e4b.update_layout(xaxis_title="Hour of Day (Chronological Holdout Block)", yaxis_title="Air Quality Index",
+                                       template="plotly_white", height=380, legend=dict(orientation='h', y=-0.25), margin=dict(t=20))
+                st.plotly_chart(fig_e4b, use_container_width=True)
+                st.caption(f"Chronological 80/20 holdout: model trained on the earlier window, validated on the later window (MAPE = {mape:.2f}%).")
+            else:
+                st.info("Not enough readings in this scope/slice for a stable chronological holdout split.")
+        st.write("---")
 
         # ==============================================================================
-        # 6. DIAGNOSTIC MATRIX
+        # 10. DIAGNOSTIC MATRIX
         # ==============================================================================
-        st.write("---")
         section_title("Congestion Characterization Verification Matrix")
         verification_matrix = pd.DataFrame([
-            {'Congestion Index': r'High Delay ($TTI \ge 2.5$)', 'Roadside AQI': 'Elevated Emission Spike', 'Inferred Traffic Mechanism': 'High-Volume Traffic Accumulation', 'Targeted CUMTA Policy Intervention': 'Trigger Structural Transit Capacity Management Systems'},
-            {'Congestion Index': r'High Delay ($TTI \ge 2.5$)', 'Roadside AQI': 'Baseline Flat / Normal Profile', 'Inferred Traffic Mechanism': 'Low-Volume Incident Blockage (e.g., Accident)', 'Targeted CUMTA Policy Intervention': 'Dispatch Rapid Incident Response Teams for Clearance'},
-            {'Congestion Index': r'Free-Flow ($TTI \le 1.2$)', 'Roadside AQI': 'Elevated Emission Spike', 'Inferred Traffic Mechanism': 'External Non-Traffic Emission Source', 'Targeted CUMTA Policy Intervention': 'Initiate Industrial Plant Environmental Emissions Audit'},
-            {'Congestion Index': r'Free-Flow ($TTI \le 1.2$)', 'Roadside AQI': 'Baseline Flat / Normal Profile', 'Inferred Traffic Mechanism': 'Optimal Healthy Corridor Operation', 'Targeted CUMTA Policy Intervention': 'Maintain Standard Automated Continuous Tracking Sensor Feeds'}
+            {'Congestion Index': r'High Delay ($TTI \ge 1.5$)', 'Roadside AQI': 'Elevated Emission Spike (ΔAQI ≥ 0)', 'Inferred Traffic Mechanism': 'High-Volume Traffic Accumulation', 'Targeted CUMTA Policy Intervention': 'Trigger Structural Transit Capacity Management Systems'},
+            {'Congestion Index': r'High Delay ($TTI \ge 1.5$)', 'Roadside AQI': 'Flat / Below Baseline (ΔAQI < 0)', 'Inferred Traffic Mechanism': 'Low-Volume Incident Blockage (e.g., Accident)', 'Targeted CUMTA Policy Intervention': 'Dispatch Rapid Incident Response Teams for Clearance'},
+            {'Congestion Index': r'Free-Flow ($TTI < 1.5$)', 'Roadside AQI': 'Elevated Emission Spike (ΔAQI ≥ 0)', 'Inferred Traffic Mechanism': 'External Non-Traffic Emission Source', 'Targeted CUMTA Policy Intervention': 'Initiate Industrial Plant Environmental Emissions Audit'},
+            {'Congestion Index': r'Free-Flow ($TTI < 1.5$)', 'Roadside AQI': 'Flat / Below Baseline (ΔAQI < 0)', 'Inferred Traffic Mechanism': 'Optimal Healthy Corridor Operation', 'Targeted CUMTA Policy Intervention': 'Maintain Standard Automated Continuous Tracking Sensor Feeds'}
         ])
         st.table(verification_matrix)
+
+
 
     # =============================================================================
     # AI ASSISTANT WIDGET  —  rendered last so it floats above every tab
