@@ -635,6 +635,86 @@ def render_kpi_row(kpi_defs):
                 f'</div>',
                 unsafe_allow_html=True
             )
+# =============================================================================
+# NETWORK-SCALE HELPERS — shared by every tab so that dashboards with a
+# large number of corridors (e.g. 295) stay readable: one dropdown to focus
+# on a single corridor, plus a single ranked "Global Congestion Index" so
+# corridors can be compared on one number instead of eyeballing separate
+# severity/frequency figures.
+# =============================================================================
+TOP_N_OVERVIEW = 15  # how many corridors to show in any "network overview" chart
+
+def compute_global_congestion_index(metrics_df, corridor_col='corridor_name'):
+    """
+    Build a single 0-100 Global Congestion Index (GCI) per corridor, so that
+    "corridor A is more congested than corridor B" has one authoritative
+    number behind it. Blends, across corridors (min-max normalized so the
+    index is always relative to the current network snapshot):
+      - severity            : corridor's mean of its segments' P90 TTI
+      - frequency           : corridor's mean % of time congested
+      - root-cause density  : share of the corridor's segments confirmed as root cause
+      - spillover exposure  : share of the corridor's segments tagged as spillover/victim
+    Expects `metrics_df` to already have one row per segment with columns
+    p90_tti, pct_time_congested, classification, segment_uid, corridor_col.
+    """
+    def _mm(s):
+        if s.max() == s.min():
+            return s * 0.0
+        return (s - s.min()) / (s.max() - s.min())
+
+    corr_agg = metrics_df.groupby(corridor_col).agg(
+        mean_p90_tti=('p90_tti', 'mean'),
+        mean_pct_congested=('pct_time_congested', 'mean'),
+        n_segments=('segment_uid', 'nunique'),
+        n_root_cause=('classification', lambda s: (s == 'Confirmed root cause').sum()),
+        n_spillover=('classification', lambda s: (s == 'Likely spillover / victim').sum()),
+    ).reset_index()
+
+    corr_agg['root_cause_share'] = corr_agg['n_root_cause'] / corr_agg['n_segments'].clip(lower=1)
+    corr_agg['spillover_share'] = corr_agg['n_spillover'] / corr_agg['n_segments'].clip(lower=1)
+
+    corr_agg['n_severity'] = _mm(corr_agg['mean_p90_tti'])
+    corr_agg['n_frequency'] = _mm(corr_agg['mean_pct_congested'])
+    corr_agg['n_rootcause'] = _mm(corr_agg['root_cause_share'])
+    corr_agg['n_spill'] = _mm(corr_agg['spillover_share'])
+
+    W_SEV, W_FREQ, W_RC, W_SPILL = 0.35, 0.30, 0.25, 0.10
+    corr_agg['global_congestion_index'] = 100 * (
+        corr_agg['n_severity'] * W_SEV +
+        corr_agg['n_frequency'] * W_FREQ +
+        corr_agg['n_rootcause'] * W_RC +
+        corr_agg['n_spill'] * W_SPILL
+    )
+    corr_agg = corr_agg.sort_values('global_congestion_index', ascending=False).reset_index(drop=True)
+    corr_agg.insert(0, 'congestion_rank', corr_agg.index + 1)
+    return corr_agg
+
+
+def render_corridor_selector(unique_corridors, key,
+                              overview_label="🌐 All corridors — network overview (Top {})".format(TOP_N_OVERVIEW)):
+    """One dropdown, reused across tabs, so a page never has to render one
+    chart per corridor. Choosing a specific corridor switches that tab into
+    a focused single-corridor view; the overview option keeps only a ranked
+    Top-N summary instead of stacking a chart per corridor."""
+    options = [overview_label] + sorted(str(c) for c in unique_corridors)
+    choice = st.selectbox("🛣️ Corridor", options, key=key)
+    return choice, (choice != overview_label)
+
+
+def render_topn_bar(rank_df, name_col, score_col, xlabel, color="#e74c3c", n=TOP_N_OVERVIEW, ascending=False):
+    """Bar chart limited to the top (or bottom) N rows of a ranking table —
+    keeps corridor-level bar charts legible no matter how many corridors
+    exist in the network."""
+    plot_df = rank_df.sort_values(score_col, ascending=ascending).head(n)
+    fig, ax = plt.subplots(figsize=(10, max(3.5, 0.32 * len(plot_df))))
+    ax.barh(plot_df[name_col].astype(str), plot_df[score_col], color=color, edgecolor='white')
+    ax.invert_yaxis()
+    ax.set_xlabel(xlabel, fontweight='bold', fontsize=9, color='#1a1a2e')
+    ax.grid(axis='x', linestyle=':', alpha=0.4)
+    style_axes(ax)
+    plt.tight_layout(pad=1.2)
+    st.pyplot(fig)
+    plt.close(fig)
 
 
 _CORRIDOR_DESCRIPTOR_WORDS = {
@@ -2393,6 +2473,19 @@ def main():
         top_5_segments = top_priority_metrics.head(5)
         top_row = top_priority_metrics.iloc[0]
         rc_segments = metrics[metrics['root_cause_events'] > 0].sort_values('root_cause_events', ascending=False)
+
+        # ----- Global Congestion Index (GCI): one number per corridor, so -----
+        # ----- "corridor A is worse than corridor B" is never a judgment call -----
+        corridor_gci = compute_global_congestion_index(metrics)
+        metrics = metrics.merge(
+            corridor_gci[['corridor_name', 'global_congestion_index', 'congestion_rank']],
+            on='corridor_name', how='left'
+        )
+        top_priority_metrics = top_priority_metrics.merge(
+            corridor_gci[['corridor_name', 'global_congestion_index', 'congestion_rank']],
+            on='corridor_name', how='left'
+        )
+        n_corridors_total = int(metrics['corridor_name'].nunique())
  
         # ==============================================================================
         # 4. KPI HEADER ROW — quick-glance network health
@@ -2412,7 +2505,59 @@ def main():
  
         st.write("")
         st.write("---")
- 
+
+        # ==============================================================================
+        # 4b. GLOBAL CONGESTION INDEX — one number to compare corridors
+        # ==============================================================================
+        section_title("Global Congestion Index (GCI) — Which Corridor Is Worse, Network-Wide")
+        st.markdown(
+            '<div class="h1-section-sub">A single 0–100 score per corridor, blending tail severity (35%), how '
+            'often it is congested (30%), the share of its segments confirmed as root causes (25%), and the share '
+            'tagged as spillover/victim (10%) — all normalized against every other corridor in this network. This '
+            'is the answer to "is this corridor more congested than the others," as one number instead of several '
+            'charts compared by eye.</div>',
+            unsafe_allow_html=True
+        )
+        gci_kpi = [
+            ("Corridors ranked", f"{n_corridors_total}", "#3498db", "Everything on the current feed"),
+            ("Most congested corridor", corridor_gci.iloc[0]['corridor_name'], "#e74c3c",
+             f"GCI {corridor_gci.iloc[0]['global_congestion_index']:.1f} / 100"),
+            ("Least congested corridor", corridor_gci.iloc[-1]['corridor_name'], "#2ecc71",
+             f"GCI {corridor_gci.iloc[-1]['global_congestion_index']:.1f} / 100"),
+        ]
+        render_kpi_row(gci_kpi)
+        st.write("")
+        render_topn_bar(
+            corridor_gci, 'corridor_name', 'global_congestion_index',
+            f"Global Congestion Index (0-100, higher = more congested) — Top {TOP_N_OVERVIEW} of {n_corridors_total} corridors"
+        )
+        with st.expander(f"Full corridor ranking ({n_corridors_total} corridors)"):
+            st.dataframe(
+                corridor_gci[['congestion_rank', 'corridor_name', 'global_congestion_index',
+                               'mean_p90_tti', 'mean_pct_congested', 'n_root_cause', 'n_spillover', 'n_segments']]
+                .rename(columns={
+                    'congestion_rank': 'Rank', 'corridor_name': 'Corridor',
+                    'global_congestion_index': 'GCI (0-100)', 'mean_p90_tti': 'Avg P90 TTI',
+                    'mean_pct_congested': 'Avg congestion density (%)', 'n_root_cause': 'Root-cause segments',
+                    'n_spillover': 'Spillover segments', 'n_segments': 'Segments monitored',
+                })
+                .style.format({'GCI (0-100)': '{:.1f}', 'Avg P90 TTI': '{:.2f}', 'Avg congestion density (%)': '{:.2f}%'}),
+                width="stretch"
+            )
+
+        st.write("---")
+
+        # ==============================================================================
+        # 4c. CORRIDOR SELECTOR — every remaining chart below focuses on one
+        # corridor (or a Top-N overview) instead of stacking a chart per
+        # corridor, so this tab stays readable regardless of network size.
+        # ==============================================================================
+        selected_corridor_h1, is_single_h1 = render_corridor_selector(
+            metrics['corridor_name'].unique(), key="h1_corridor_selector"
+        )
+
+        st.write("---")
+
         # ==============================================================================
         # 5. SEGMENT-LEVEL RANKING — direct answer to the business question
         # ==============================================================================
@@ -2456,7 +2601,13 @@ def main():
             'priority_rank', 'segment_id', 'classification', 'priority_tier',
             'p90_tti', 'pct_time_congested', 'mean_onset_hour', 'root_cause_events', 'mcbi_score', 'recommended_action'
         ]
-        display_df = top_priority_metrics[full_display_cols].rename(columns={
+        ranking_scope_metrics = (
+            top_priority_metrics[top_priority_metrics['corridor_name'] == selected_corridor_h1]
+            if is_single_h1 else top_priority_metrics
+        )
+        if is_single_h1:
+            st.caption(f"Filtered to corridor: **{selected_corridor_h1}**. Switch the selector above to see other corridors.")
+        display_df = ranking_scope_metrics[full_display_cols].rename(columns={
             'priority_rank': 'Rank', 'segment_id': 'Segment', 'classification': 'Classification',
             'priority_tier': 'Priority', 'p90_tti': 'P90 TTI', 'pct_time_congested': 'Congestion density (%)',
             'mean_onset_hour': 'Avg onset time', 'root_cause_events': 'Verified root-cause events',
@@ -2478,15 +2629,22 @@ def main():
  
         st.write("---")
         section_title("Corridor-Level Summary")
-        corridor_rankings = df_analyzed.groupby('corridor_name').agg(
+        corridor_scope_df = (
+            df_analyzed[df_analyzed['corridor_name'] == selected_corridor_h1] if is_single_h1 else df_analyzed
+        )
+        corridor_rankings = corridor_scope_df.groupby('corridor_name').agg(
             mean_tti=('travel_time_index_tti', 'mean'),
             max_tti=('travel_time_index_tti', 'max'),
             segments_monitored=('segment_uid', 'nunique'),
             congested_intervals=('is_congested', 'sum'),
-        ).sort_values(by='mean_tti', ascending=False).reset_index()
-        
+        ).reset_index()
+        corridor_rankings = corridor_rankings.merge(
+            corridor_gci[['corridor_name', 'global_congestion_index', 'congestion_rank']],
+            on='corridor_name', how='left'
+        ).sort_values(by='global_congestion_index', ascending=False).reset_index(drop=True)
+
         corridor_styled = corridor_rankings.style.format(
-            {'mean_tti': '{:.3f}', 'max_tti': '{:.2f}'}
+            {'mean_tti': '{:.3f}', 'max_tti': '{:.2f}', 'global_congestion_index': '{:.1f}'}
         ).set_table_styles([
             {'selector': 'th', 'props': [('background-color', '#1a1a2e'), ('color', 'white'),
                                           ('font-weight', '600'), ('font-size', '12.5px'),
@@ -2495,7 +2653,8 @@ def main():
         st.dataframe(corridor_styled, width="stretch")
         st.caption(
             "Corridors with only one monitored segment (segments_monitored = 1) are judged by the self-persistence "
-            "test described above, not by comparison to an upstream neighbor."
+            "test described above, not by comparison to an upstream neighbor. `congestion_rank` is this corridor's "
+            "rank on the network-wide Global Congestion Index above (1 = most congested)."
         )
  
         # ==============================================================================
@@ -2542,59 +2701,199 @@ def main():
         st.caption("The red block is the only component tied to confirmed causal evidence; a segment with a tall red block is a verified root cause. A segment can still rank highly with a small red block if the other three components are large enough — that's the MCBI-vs-declared-bottleneck gap explained above.")
  
         # ==============================================================================
-        # 7. SEGMENT-WISE CONGESTION HEATMAP (single combined view, all corridors)
+        # 7. SEGMENT-WISE CONGESTION HEATMAP
+        # X-axis = segments numbered sequentially along the corridor (not the
+        # raw segment_id string), Y-axis = hour of day. In single-corridor
+        # mode this is exactly one corridor's own segment chain; in overview
+        # mode it is capped to the Top-N most congested corridors (by GCI)
+        # so the figure never has to render hundreds of corridors at once.
         # ==============================================================================
         st.write("---")
-        section_title("Segment-Wise Congestion Heatmap - All Corridors")
-        st.markdown(
-            '<div class="h1-section-sub">One combined heatmap. X-axis = every monitored segment across all 5 '
-            'corridors (Central-Puzhal and Puzhal-Central kept as two separate one-way corridors, never merged). '
-            'Y-axis = hour of day. Cell color = congestion strength (fraction of that hour spent congested for '
-            'that segment). Segment labels on the x-axis are color-coded by status: red = confirmed root cause, '
-            'yellow = likely spillover, green = no structural issue.</div>',
-            unsafe_allow_html=True
-        )
- 
-        seg_order_all = metrics.sort_values(['corridor_name', 'mean_sequence_order'])['segment_uid'].tolist()
-        seg_label_map = metrics.set_index('segment_uid')['segment_id'].to_dict()
-        seg_class_map = metrics.set_index('segment_uid')['classification'].to_dict()
- 
-        heat_pivot = df_analyzed.pivot_table(
+
+        if is_single_h1:
+            section_title(f"Segment-Wise Congestion Heatmap — {selected_corridor_h1}")
+            st.markdown(
+                '<div class="h1-section-sub">X-axis = segments numbered sequentially along this corridor '
+                '(1 = first monitored segment in <code>sequence_order</code>). Y-axis = hour of day. Cell color = '
+                'congestion strength (fraction of that hour spent congested for that segment). Segment number '
+                'labels are color-coded by status: red = confirmed root cause, yellow = likely spillover, green = '
+                'no structural issue.</div>',
+                unsafe_allow_html=True
+            )
+            heat_scope_metrics = metrics[metrics['corridor_name'] == selected_corridor_h1].sort_values('corridor_position')
+            heat_scope_df = df_analyzed[df_analyzed['corridor_name'] == selected_corridor_h1]
+            seg_order_all = heat_scope_metrics['segment_uid'].tolist()
+            seg_pos_map = heat_scope_metrics.set_index('segment_uid')['corridor_position'].to_dict()
+            seg_class_map = heat_scope_metrics.set_index('segment_uid')['classification'].to_dict()
+            col_label_map = {s: f"Seg {seg_pos_map[s]:02d}" for s in seg_order_all}
+            fig_width = min(max(8, 0.55 * len(seg_order_all)), 24.0)
+            heat_title = f"{selected_corridor_h1} — {len(seg_order_all)} segments, numbered sequentially"
+            x_rotation, x_ha = 0, 'center'
+        else:
+            top_corridors_overview = corridor_gci.head(TOP_N_OVERVIEW)['corridor_name'].tolist()
+            section_title(f"Segment-Wise Congestion Heatmap — Top {len(top_corridors_overview)} Most Congested Corridors")
+            st.markdown(
+                '<div class="h1-section-sub">This network has ' + str(n_corridors_total) + ' corridors — showing '
+                'only the most congested ones by Global Congestion Index so the chart stays readable. Segments are '
+                'still grouped and ordered by corridor. Pick a specific corridor from the selector above for its '
+                'own sequentially-numbered breakdown. Labels color-coded by status: red = confirmed root cause, '
+                'yellow = likely spillover, green = no structural issue.</div>',
+                unsafe_allow_html=True
+            )
+            heat_scope_metrics = metrics[metrics['corridor_name'].isin(top_corridors_overview)] \
+                .sort_values(['corridor_name', 'mean_sequence_order'])
+            heat_scope_df = df_analyzed[df_analyzed['corridor_name'].isin(top_corridors_overview)]
+            seg_order_all = heat_scope_metrics['segment_uid'].tolist()
+            seg_class_map = heat_scope_metrics.set_index('segment_uid')['classification'].to_dict()
+            col_label_map = heat_scope_metrics.set_index('segment_uid')['segment_id'].to_dict()
+            fig_width = min(max(10, 0.9 * len(seg_order_all)), 34.0)
+            heat_title = f"Congestion Strength by Segment and Hour ({len(seg_order_all)} segments across {len(top_corridors_overview)} of {n_corridors_total} corridors)"
+            x_rotation, x_ha = 30, 'right'
+
+        heat_pivot = heat_scope_df.pivot_table(
             index='hour_of_day', columns='segment_uid', values='is_congested', aggfunc='mean'
         )
         heat_pivot = heat_pivot.reindex(columns=seg_order_all)
         heat_pivot = heat_pivot.reindex(range(24))
-        heat_pivot.columns = [seg_label_map.get(s, s) for s in seg_order_all]
- 
-        fig_seg_heat, ax_seg_heat = plt.subplots(figsize=(min(max(10, 1.8 * len(seg_order_all)), 40.0), 8))
+        heat_pivot.columns = [col_label_map.get(s, s) for s in seg_order_all]
+
+        fig_seg_heat, ax_seg_heat = plt.subplots(figsize=(fig_width, 8))
         sns.heatmap(
             heat_pivot, cmap='YlOrRd', vmin=0, vmax=1, ax=ax_seg_heat,
             cbar_kws={'label': 'Congestion strength (fraction of hour congested)'},
             linewidths=0.4, linecolor='white'
         )
- 
+
         for tick_label, seg_uid in zip(ax_seg_heat.get_xticklabels(), seg_order_all):
             status = seg_class_map.get(seg_uid, "No structural issue detected")
             tick_label.set_color(STATUS_COLORS[status])
             tick_label.set_fontweight('bold')
- 
-        ax_seg_heat.set_title(
-            "Congestion Strength by Segment and Hour ("
-            + str(len(seg_order_all)) + " segments across "
-            + str(metrics['corridor_name'].nunique()) + " corridors)",
-            fontsize=12, fontweight='bold', color='#1a1a2e', pad=12
+
+        ax_seg_heat.set_title(heat_title, fontsize=12, fontweight='bold', color='#1a1a2e', pad=12)
+        ax_seg_heat.set_xlabel(
+            "Segment number (sequential along corridor)" if is_single_h1 else "Segment",
+            fontsize=10, fontweight='bold', color='#1a1a2e'
         )
-        ax_seg_heat.set_xlabel("Segment", fontsize=10, fontweight='bold', color='#1a1a2e')
         ax_seg_heat.set_ylabel("Hour of day", fontsize=10, fontweight='bold', color='#1a1a2e')
-        plt.xticks(rotation=30, ha='right', fontsize=8.5)
+        plt.xticks(rotation=x_rotation, ha=x_ha, fontsize=8.5)
         plt.yticks(fontsize=8.5)
         plt.tight_layout(pad=1.2)
         st.pyplot(fig_seg_heat)
         plt.close(fig_seg_heat)
         st.caption(
-            "Central-Puzhal and Puzhal-Central are shown as two independent columns here - they are opposite "
-            "one-way directions, not one corridor, and are never averaged together."
+            "Corridors that silently conflated two opposite one-way directions are already split into two "
+            "independent chains upstream, so directional pairs (e.g. Central-Puzhal / Puzhal-Central) are never "
+            "averaged together here."
         )
+
+        # ==============================================================================
+        # 7b. SPILLOVER PROPAGATION / CASCADE MAP — only meaningful for one
+        # corridor at a time: traces, minute by minute after a verified
+        # root-cause breakdown, which upstream segments also go congested —
+        # i.e. the queue physically backing up the corridor. A corridor can
+        # have more than one confirmed root cause (e.g. two independently
+        # bad-quality stretches); each is traced separately.
+        # ==============================================================================
+        st.write("---")
+        section_title("Spillover Propagation / Cascade Map")
+        if not is_single_h1:
+            st.info(
+                "Select a specific corridor from the dropdown above to trace how congestion spills upstream from "
+                "a verified root cause over the following intervals — this view only makes sense one corridor at a time."
+            )
+        else:
+            st.markdown(
+                f'<div class="h1-section-sub">For <b>{selected_corridor_h1}</b>: starting from every verified '
+                'root-cause breakdown event, this checks whether the segments upstream also become congested in '
+                'the following intervals — the signature of a queue physically backing up the corridor, as '
+                'distinct from every segment failing independently and simultaneously. If this corridor has more '
+                'than one confirmed root-cause segment (e.g. two separately bad-quality stretches), pick which '
+                'one to trace below.</div>',
+                unsafe_allow_html=True
+            )
+            corridor_metrics_h1 = metrics[metrics['corridor_name'] == selected_corridor_h1].sort_values('corridor_position')
+            corridor_df_h1 = df_analyzed[df_analyzed['corridor_name'] == selected_corridor_h1].copy()
+            rc_segments_h1 = corridor_metrics_h1[corridor_metrics_h1['classification'] == 'Confirmed root cause']
+
+            if len(rc_segments_h1) == 0:
+                st.info(f"No confirmed root-cause segment on {selected_corridor_h1} yet — there is nothing to trace a cascade from.")
+            else:
+                if len(rc_segments_h1) > 1:
+                    st.markdown(
+                        f"**{len(rc_segments_h1)} independent confirmed root-cause segments** on this corridor — "
+                        "each can generate its own spillover chain (for example, two separate stretches of genuinely "
+                        "poor road quality)."
+                    )
+                rc_choice_label = st.selectbox(
+                    "Trace cascade from root-cause segment:",
+                    rc_segments_h1['segment_id'].tolist(),
+                    key="h1_rc_cascade_choice"
+                )
+                rc_row = rc_segments_h1[rc_segments_h1['segment_id'] == rc_choice_label].iloc[0]
+                rc_uid = rc_row['segment_uid']
+                rc_pos = rc_row['corridor_position']
+
+                # Discrete time steps within this corridor's own observed
+                # timestamps (position in the sorted sequence), so the trace
+                # works even with irregular real-world reading gaps.
+                ts_sorted = sorted(corridor_df_h1['execution_timestamp'].unique())
+                ts_to_step = {t: i for i, t in enumerate(ts_sorted)}
+                corridor_df_h1['time_step'] = corridor_df_h1['execution_timestamp'].map(ts_to_step)
+
+                rc_event_steps = corridor_df_h1.loc[
+                    (corridor_df_h1['segment_uid'] == rc_uid) & (corridor_df_h1['root_cause_event'] == True),
+                    'time_step'
+                ].tolist()
+
+                if len(rc_event_steps) == 0:
+                    st.info("No individual verified breakdown timestamps found to trace for this segment.")
+                else:
+                    MAX_OFFSET = 4
+                    upstream_positions = corridor_metrics_h1[corridor_metrics_h1['corridor_position'] <= rc_pos] \
+                        .sort_values('corridor_position', ascending=False)
+                    pos_to_uid = upstream_positions.set_index('corridor_position')['segment_uid'].to_dict()
+                    pos_to_label = upstream_positions.set_index('corridor_position')['segment_id'].to_dict()
+
+                    seg_step_congest = corridor_df_h1.drop_duplicates(subset=['segment_uid', 'time_step']) \
+                        .set_index(['segment_uid', 'time_step'])['is_congested']
+
+                    cascade_rows = []
+                    row_labels = []
+                    for pos in upstream_positions['corridor_position'].tolist():
+                        uid = pos_to_uid[pos]
+                        row_vals = []
+                        for k in range(MAX_OFFSET + 1):
+                            vals = [
+                                bool(seg_step_congest.loc[(uid, t0 + k)])
+                                for t0 in rc_event_steps if (uid, t0 + k) in seg_step_congest.index
+                            ]
+                            row_vals.append(np.mean(vals) if len(vals) > 0 else np.nan)
+                        cascade_rows.append(row_vals)
+                        row_labels.append(pos_to_label[pos])
+
+                    cascade_matrix = pd.DataFrame(
+                        cascade_rows, index=row_labels, columns=[f"T+{k}" for k in range(MAX_OFFSET + 1)]
+                    )
+
+                    fig_cascade, ax_cascade = plt.subplots(figsize=(9, max(3.0, 0.45 * len(cascade_matrix))))
+                    sns.heatmap(
+                        cascade_matrix.astype(float), cmap='YlOrRd', vmin=0, vmax=1, ax=ax_cascade,
+                        cbar_kws={'label': 'Fraction of events congested'}, linewidths=0.5, linecolor='white',
+                        annot=True, fmt='.2f', annot_kws={'fontsize': 8}
+                    )
+                    ax_cascade.set_xlabel("Intervals after the root-cause breakdown", fontweight='bold', fontsize=9, color='#1a1a2e')
+                    ax_cascade.set_ylabel("Segment (nearest → farthest upstream)", fontweight='bold', fontsize=9, color='#1a1a2e')
+                    ax_cascade.set_title(f"Cascade from {rc_choice_label}", fontsize=11, fontweight='bold', color='#1a1a2e', pad=10)
+                    plt.tight_layout(pad=1.2)
+                    st.pyplot(fig_cascade)
+                    plt.close(fig_cascade)
+                    st.caption(
+                        "Each row is the root-cause segment or one of its upstream neighbors, ordered nearest to "
+                        "farthest. Each column is how many intervals after the root-cause segment's own breakdown. "
+                        "The root-cause row should sit at or near 1.00 at T+0 by definition. If a row stays near 0 "
+                        "at T+0 but climbs at T+1, T+2..., that segment is being pulled into congestion by the "
+                        "spillover wave moving upstream — it is a victim of this root cause, not an independent fault."
+                    )
  
         # ==============================================================================
         # 8. TOP SEGMENT PROFILES (weekday vs weekend)
@@ -2652,11 +2951,28 @@ def main():
  
         # ==============================================================================
         # 9. EMPIRICAL CASE STUDY (multi-segment corridors)
+        # In single-corridor mode this renders only the selected corridor. In
+        # overview mode it is capped to the Top-N most congested multi-segment
+        # corridors by GCI, instead of one figure per corridor network-wide.
         # ==============================================================================
-        multi_corridors = sorted(metrics.loc[metrics['multi_segment_corridor'], 'corridor_name'].unique().tolist())
+        if is_single_h1:
+            multi_corridors = [selected_corridor_h1] if metrics.loc[
+                metrics['corridor_name'] == selected_corridor_h1, 'multi_segment_corridor'
+            ].any() else []
+        else:
+            multi_seg_corridor_names = set(metrics.loc[metrics['multi_segment_corridor'], 'corridor_name'].unique())
+            multi_corridors = [
+                c for c in corridor_gci['corridor_name'].tolist() if c in multi_seg_corridor_names
+            ][:TOP_N_OVERVIEW]
+
         if len(multi_corridors) > 0:
             st.write("---")
             section_title("Empirical Verification: Root-Cause Events")
+            if not is_single_h1:
+                st.caption(
+                    f"Showing the {len(multi_corridors)} most congested multi-segment corridors by GCI. Select a "
+                    "specific corridor above to see this chart for any corridor in the network."
+                )
             for corr in multi_corridors:
                 case_df = df_analyzed[df_analyzed['corridor_name'] == corr]
                 corr_metrics_map = metrics[metrics['corridor_name'] == corr].set_index('segment_uid')['classification']
@@ -2970,22 +3286,36 @@ def main():
  
         section_title("Peak-Hour Identification & Operational Clearance Timeline")
         st.dataframe(peak_report_df, width="stretch")
- 
+
+        st.write("---")
+        # ==============================================================================
+        # CORRIDOR SELECTOR — everything below renders one corridor at a time
+        # (or a Top-N overview), never one chart per corridor network-wide.
+        # ==============================================================================
+        selected_corridor_h2, is_single_h2 = render_corridor_selector(unique_corridors, key="h2_corridor_selector")
+        st.write("---")
+
         section_title("Infrastructure Failure Rate Matrix: Weekday Commutes vs. Weekend Leisure Volumes")
-        fig_bar, ax_bar = plt.subplots(figsize=(10, 4.5))
-        
         wd_bar_data = peak_report_df[peak_report_df['day_profile'] == 'Weekday'][['corridor', 'failure_rate']].rename(columns={'failure_rate': 'weekday_rate'})
         we_bar_data = peak_report_df[peak_report_df['day_profile'] == 'Weekend'][['corridor', 'failure_rate']].rename(columns={'failure_rate': 'weekend_rate'})
         bar_merged = wd_bar_data.merge(we_bar_data, on='corridor', how='outer').fillna(0.0)
+        bar_merged['overall_rate'] = (bar_merged['weekday_rate'] + bar_merged['weekend_rate']) / 2.0
 
-        x_indices = np.arange(len(bar_merged))
+        if is_single_h2:
+            bar_scope = bar_merged[bar_merged['corridor'] == selected_corridor_h2]
+        else:
+            bar_scope = bar_merged.sort_values('overall_rate', ascending=False).head(TOP_N_OVERVIEW)
+            st.caption(f"Showing the {len(bar_scope)} corridors with the highest average failure rate, out of {len(bar_merged)} total. Select a specific corridor above to isolate it.")
+
+        fig_bar, ax_bar = plt.subplots(figsize=(10, max(4.5, 0.4 * len(bar_scope))))
+        x_indices = np.arange(len(bar_scope))
         b_width = 0.35
 
-        ax_bar.bar(x_indices - b_width/2, bar_merged['weekday_rate'] * 100, b_width, label='Weekday Failure %', color='#3498db', edgecolor='white', alpha=0.95)
-        ax_bar.bar(x_indices + b_width/2, bar_merged['weekend_rate'] * 100, b_width, label='Weekend Failure %', color='#f1c40f', edgecolor='white', alpha=0.95)
+        ax_bar.bar(x_indices - b_width/2, bar_scope['weekday_rate'] * 100, b_width, label='Weekday Failure %', color='#3498db', edgecolor='white', alpha=0.95)
+        ax_bar.bar(x_indices + b_width/2, bar_scope['weekend_rate'] * 100, b_width, label='Weekend Failure %', color='#f1c40f', edgecolor='white', alpha=0.95)
 
         ax_bar.set_xticks(x_indices)
-        ax_bar.set_xticklabels(bar_merged['corridor'], rotation=10, ha='center', fontsize=9, color='#4a5568')
+        ax_bar.set_xticklabels(bar_scope['corridor'], rotation=20, ha='right', fontsize=9, color='#4a5568')
         
         ax_bar.set_ylabel("Operating Windows in Breakdown State (%)", fontweight='bold', color='#1a1a2e')
         ax_bar.grid(axis='y', linestyle=':', alpha=0.4)
@@ -2996,19 +3326,22 @@ def main():
         plt.close(fig_bar)
  
         # ==============================================================================
-        # CORRIDOR CONGESTION-RATIO HEATMAPS — hour of day vs day type, all corridors
+        # CORRIDOR CONGESTION-RATIO HEATMAPS — hour of day vs day type
         # ==============================================================================
         st.write("---")
-        section_title("Hourly Congestion Ratio Heatmaps — All Corridors")
+        corridors_to_render_h2 = [selected_corridor_h2] if is_single_h2 else bar_scope['corridor'].tolist()
+        heatmap_title_h2 = f"Hourly Congestion Ratio Heatmap — {selected_corridor_h2}" if is_single_h2 \
+            else f"Hourly Congestion Ratio Heatmaps — Top {len(corridors_to_render_h2)} Corridors by Failure Rate"
+        section_title(heatmap_title_h2)
         st.markdown(
-            '<div class="h1-section-sub">One heatmap per corridor. Cell value = <b>congestion ratio</b> — the '
+            '<div class="h1-section-sub">Cell value = <b>congestion ratio</b> — the '
             'fraction of readings in that hour classified as failed (TTI above the corridor\'s own 90th-percentile '
             'threshold) — not raw TTI severity, so ratios are directly comparable across corridors of different '
             'baseline speeds. Weekday and weekend are separate rows. Central-Puzhal and Puzhal-Central are shown '
             'as two separate corridors, never merged.</div>',
             unsafe_allow_html=True
         )
-        for corr in unique_corridors:
+        for corr in corridors_to_render_h2:
             corr_df = df_fetched[df_fetched['corridor_name'] == corr].copy()
             corr_df['day_label'] = np.where(corr_df['is_weekend'] == 1, 'Weekend', 'Weekday')
             pivot = corr_df.pivot_table(index='day_label', columns='derived_hour', values='is_failed', aggfunc='mean')
@@ -3030,8 +3363,10 @@ def main():
  
  
         st.write("---")
-        section_title("Diurnal Velocity Degradation Tracking per Network Corridor")
-        for corr in unique_corridors:
+        diurnal_title_h2 = f"Diurnal Velocity Degradation Tracking — {selected_corridor_h2}" if is_single_h2 \
+            else f"Diurnal Velocity Degradation Tracking — Top {len(corridors_to_render_h2)} Corridors by Failure Rate"
+        section_title(diurnal_title_h2)
+        for corr in corridors_to_render_h2:
             corr_data = df_fetched[df_fetched['corridor_name'] == corr]
             wd_profile = corr_data[corr_data['is_weekend'] == 0].groupby('time_of_day')['travel_time_index_tti'].mean().sort_index()
             we_profile = corr_data[corr_data['is_weekend'] == 1].groupby('time_of_day')['travel_time_index_tti'].mean().sort_index()
@@ -3697,7 +4032,7 @@ def main():
         st.table(policy_h3)
 
     
-     # =============================================================================
+   # =============================================================================
     # MODULE TAB 4: HYPOTHESIS 4 - WEATHER-DRIVEN VARIANCE
     # =============================================================================
     elif selected_tab == "Hypothesis 4: Weather-Driven Variance":
@@ -3880,8 +4215,29 @@ def main():
         ols_df['hour_sin'] = np.sin(2 * np.pi * ols_df['derived_hour'] / 24.0)
         ols_df['hour_cos'] = np.cos(2 * np.pi * ols_df['derived_hour'] / 24.0)
         ols_df['inv_visibility'] = 1500.0 / ols_df['visibility_meters'].clip(lower=50)
- 
-        seg_dummies_ols = pd.get_dummies(ols_df['shapefile_segment_name'], prefix='seg', drop_first=True).astype(float)
+
+        # A dummy column per SEGMENT is fine on a handful of corridors, but at
+        # network scale (e.g. 295 corridors, easily 1,000+ segments) it turns
+        # the design matrix into thousands of columns — slow-to-singular and
+        # not something anyone can read a coefficient table for anyway. Fall
+        # back to CORRIDOR-level fixed effects once the segment count gets
+        # large; still controls for each corridor's own baseline speed, just
+        # at a scale that stays fast and interpretable.
+        _n_unique_segments_h4 = ols_df['shapefile_segment_name'].nunique()
+        _MAX_SEGMENT_DUMMIES_H4 = 80
+        if _n_unique_segments_h4 > _MAX_SEGMENT_DUMMIES_H4:
+            fixed_effect_col_h4 = 'corridor_name'
+            fixed_effect_label_h4 = 'corridor'
+            st.info(
+                f"This feed has {_n_unique_segments_h4} distinct segments — too many for individual segment fixed "
+                f"effects to stay fast or readable. Using **corridor-level** fixed effects instead (still controls "
+                "for each corridor's own baseline speed) for this cross-check."
+            )
+        else:
+            fixed_effect_col_h4 = 'shapefile_segment_name'
+            fixed_effect_label_h4 = 'segment'
+
+        seg_dummies_ols = pd.get_dummies(ols_df[fixed_effect_col_h4], prefix='fe', drop_first=True).astype(float)
         numeric_feats = ols_df[['rainfall_intensity_mm_hr', 'inv_visibility', 'hour_sin', 'hour_cos', 'is_weekend']].astype(float)
         design_frame = pd.concat(
             [pd.Series(1.0, index=ols_df.index, name='intercept'), numeric_feats, seg_dummies_ols], axis=1
@@ -3944,7 +4300,7 @@ def main():
             naive_rain_slope = float(segment_report_df['rain_slope'].mean())
  
             kpi_ols = [
-                ("Model", "Multivariate OLS (NumPy)", "#3498db", "Segment fixed effects + hour-of-day controls"),
+                ("Model", "Multivariate OLS (NumPy)", "#3498db", f"{fixed_effect_label_h4.capitalize()} fixed effects + hour-of-day controls"),
                 ("Test R²", f"{r2_test:.3f}", "#2ecc71", f"Train R² = {r2_train:.3f}"),
                 ("Adjusted rain slope", f"{adjusted_rain_slope:.4f}", "#e74c3c", "TTI points per mm/hr, confound-controlled"),
                 ("Naive avg rain slope", f"{naive_rain_slope:.4f}", "#f1c40f", "Uncontrolled, from table above"),
@@ -3979,11 +4335,12 @@ def main():
             )
             st.caption(
                 "p_value < 0.05 means that factor's effect on TTI is statistically distinguishable from zero at the "
-                "network level, holding the other controlled factors fixed. Segment fixed-effect coefficients are "
-                "fitted but omitted from this table for readability — they capture each segment's own baseline TTI."
+                f"network level, holding the other controlled factors fixed. {fixed_effect_label_h4.capitalize()} "
+                f"fixed-effect coefficients are fitted but omitted from this table for readability — they capture "
+                f"each {fixed_effect_label_h4}'s own baseline TTI."
             )
         else:
-            st.info("Not enough observations relative to model parameters (segment fixed effects use up a lot of degrees of freedom) to fit a reliable model on this dataset.")
+            st.info(f"Not enough observations relative to model parameters ({fixed_effect_label_h4} fixed effects use up a lot of degrees of freedom) to fit a reliable model on this dataset.")
  
         st.write("---")
         section_title("Executive Summary and Next Steps for Engineering Teams")
@@ -3996,10 +4353,6 @@ def main():
             f"sensitivity slope.",
             border_color="#e74c3c"
         )
- 
- 
-
- 
  
 
     # =============================================================================
@@ -5030,9 +5383,20 @@ def main():
                     "specifically when — the flyover is flowing well, which is the exact displacement signature."
                 )
 
-                section_title("Top 3 Pairs: Flyover vs Immediate Downstream Exit, Hourly")
-                top3_pairs = pairs_report.head(3)
-                for _, prow in top3_pairs.iterrows():
+                section_title("Flyover -> Immediate Downstream Pair Detail, Hourly")
+                pair_corridor_options = sorted(pairs_report['corridor_name'].unique().tolist())
+                selected_corridor_h7, is_single_h7 = render_corridor_selector(
+                    pair_corridor_options, key="h7_corridor_selector",
+                    overview_label=f"🌐 All corridors — Top 3 worst pairs network-wide"
+                )
+                if is_single_h7:
+                    pairs_to_plot_h7 = pairs_report[pairs_report['corridor_name'] == selected_corridor_h7]
+                    if len(pairs_to_plot_h7) == 0:
+                        st.info(f"No qualifying flyover-exit pair on {selected_corridor_h7} (fewer than 20 overlapping readings).")
+                else:
+                    pairs_to_plot_h7 = pairs_report.head(3)
+
+                for _, prow in pairs_to_plot_h7.iterrows():
                     merged = pair_series_map[prow['pair']].copy()
                     merged['hour'] = pd.to_datetime(merged['execution_timestamp']).dt.hour
                     fl_hourly = merged.groupby('hour')['flyover_tti'].mean()
@@ -5362,112 +5726,125 @@ def main():
                 width="stretch"
             )
 
-            section_title(f"Worst Group in Detail: {top_group['macro_group_id']}")
-            top_group_segs = seg_order_table.loc[seg_order_table['macro_group_id'] == top_group['macro_group_id'], 'shapefile_segment_name'].tolist()
-            
-            fig_dil, ax_dil = plt.subplots(figsize=(10, 4.5))
-            for seg in top_group_segs:
-                seg_hourly = peak_df[peak_df['shapefile_segment_name'] == seg].copy()
-                seg_hourly['hour'] = pd.to_datetime(seg_hourly['execution_timestamp']).dt.hour
-                hourly_line = seg_hourly.groupby('hour')['travel_time_index_tti'].mean()
-                ax_dil.plot(hourly_line.index, hourly_line.values, marker='o', markersize=4, linewidth=1.6, alpha=0.7, label=f"Micro: {seg}")
-
-            macro_hourly_src = macro_ts[macro_ts['macro_group_id'] == top_group['macro_group_id']].copy()
-            macro_hourly_src['hour'] = pd.to_datetime(macro_hourly_src['execution_timestamp']).dt.hour
-            macro_hourly = macro_hourly_src.groupby('hour')['macro_tti'].mean()
-            ax_dil.plot(macro_hourly.index, macro_hourly.values, color='#1a1a2e', linewidth=3.0, linestyle='--', label='Combined macro-segment (what a link-average dashboard reports)')
-
-            ax_dil.set_xlabel("Hour of day (peak hours only)", fontweight='bold', fontsize=9, color='#1a1a2e')
-            ax_dil.set_ylabel("Mean TTI", fontweight='bold', fontsize=9, color='#1a1a2e')
-            ax_dil.grid(True, linestyle=':', alpha=0.4)
-            ax_dil.legend(loc='upper left', fontsize=8)
-            style_axes(ax_dil)
-            plt.tight_layout(pad=1.2)
-            st.pyplot(fig_dil)
-            plt.close(fig_dil)
-            st.caption(
-                "Colored lines are the real constituent micro-segments; the dashed black line is what the combined "
-                "macro-segment reports. A visible gap between the dashed line and the highest colored peak is the "
-                "queue tail a link-average dashboard mathematically hides."
-            )
-
-            # --------------------------------------------------------------
-            # MACHINE LEARNING CROSS-CHECK: Random Forest Regressor
-            # --------------------------------------------------------------
             st.write("---")
-            section_title("Machine Learning Cross-Check: Modeling Variance Lost to Aggregation")
-            st.markdown(
-                '<div class="h1-section-sub">A cross-validated Random Forest model predicts each macro-group\'s underreporting '
-                'percentage from its group size, the variance among its constituent micro-segments\' peaks, and its '
-                'combined peak TTI — quantifying which physical factors drive the aggregation illusion.</div>',
-                unsafe_allow_html=True
+            dilution_corridor_options = sorted(dilution_report['corridor_name'].unique().tolist())
+            selected_corridor_h8, is_single_h8 = render_corridor_selector(
+                dilution_corridor_options, key="h8_corridor_selector",
+                overview_label="🌐 All corridors — worst macro-group network-wide"
             )
+            if is_single_h8:
+                corridor_groups_h8 = dilution_report[dilution_report['corridor_name'] == selected_corridor_h8]
+                if len(corridor_groups_h8) == 0:
+                    st.info(f"No qualifying macro-group (>= 2 segments) on {selected_corridor_h8} at this group size.")
+                    top_group = None
+                else:
+                    top_group = corridor_groups_h8.sort_values('dilution_gap', ascending=False).iloc[0]
+            # else: top_group stays as the global worst group computed above
 
-            feat_cols_h8 = ['n_segments', 'var_micro_peak', 'macro_peak_tti']
-            feat_labels_h8 = ['Group size (segments clubbed)', 'Variance among micro peaks', 'Combined macro peak TTI']
+            if top_group is not None:
+                section_title(f"Worst Group in Detail: {top_group['macro_group_id']}")
+                top_group_segs = seg_order_table.loc[seg_order_table['macro_group_id'] == top_group['macro_group_id'], 'shapefile_segment_name'].tolist()
+                
+                fig_dil, ax_dil = plt.subplots(figsize=(10, 4.5))
+                for seg in top_group_segs:
+                    seg_hourly = peak_df[peak_df['shapefile_segment_name'] == seg].copy()
+                    seg_hourly['hour'] = pd.to_datetime(seg_hourly['execution_timestamp']).dt.hour
+                    hourly_line = seg_hourly.groupby('hour')['travel_time_index_tti'].mean()
+                    ax_dil.plot(hourly_line.index, hourly_line.values, marker='o', markersize=4, linewidth=1.6, alpha=0.7, label=f"Micro: {seg}")
+
+                macro_hourly_src = macro_ts[macro_ts['macro_group_id'] == top_group['macro_group_id']].copy()
+                macro_hourly_src['hour'] = pd.to_datetime(macro_hourly_src['execution_timestamp']).dt.hour
+                macro_hourly = macro_hourly_src.groupby('hour')['macro_tti'].mean()
+                ax_dil.plot(macro_hourly.index, macro_hourly.values, color='#1a1a2e', linewidth=3.0, linestyle='--', label='Combined macro-segment (what a link-average dashboard reports)')
+
+                ax_dil.set_xlabel("Hour of day (peak hours only)", fontweight='bold', fontsize=9, color='#1a1a2e')
+                ax_dil.set_ylabel("Mean TTI", fontweight='bold', fontsize=9, color='#1a1a2e')
+                ax_dil.grid(True, linestyle=':', alpha=0.4)
+                ax_dil.legend(loc='upper left', fontsize=8)
+                style_axes(ax_dil)
+                plt.tight_layout(pad=1.2)
+                st.pyplot(fig_dil)
+                plt.close(fig_dil)
+                st.caption(
+                    "Colored lines are the real constituent micro-segments; the dashed black line is what the combined "
+                    "macro-segment reports. A visible gap between the dashed line and the highest colored peak is the "
+                    "queue tail a link-average dashboard mathematically hides."
+                )
+
+                # --------------------------------------------------------------
+                # MACHINE LEARNING CROSS-CHECK: Random Forest Regressor
+                # --------------------------------------------------------------
+                st.write("---")
+                section_title("Machine Learning Cross-Check: Modeling Variance Lost to Aggregation")
+                st.markdown(
+                    '<div class="h1-section-sub">A cross-validated Random Forest model predicts each macro-group\'s underreporting '
+                    'percentage from its group size, the variance among its constituent micro-segments\' peaks, and its '
+                    'combined peak TTI — quantifying which physical factors drive the aggregation illusion.</div>',
+                    unsafe_allow_html=True
+                )
+
+                feat_cols_h8 = ['n_segments', 'var_micro_peak', 'macro_peak_tti']
+                feat_labels_h8 = ['Group size (segments clubbed)', 'Variance among micro peaks', 'Combined macro peak TTI']
             
-            X_h8 = dilution_report[feat_cols_h8]
-            y_h8 = dilution_report['underreport_pct']
+                X_h8 = dilution_report[feat_cols_h8]
+                y_h8 = dilution_report['underreport_pct']
 
-            if len(dilution_report) >= 20:
-                try:
-                    from sklearn.ensemble import RandomForestRegressor
-                    from sklearn.model_selection import cross_val_score
+                if len(dilution_report) >= 20:
+                    try:
+                        from sklearn.ensemble import RandomForestRegressor
+                        from sklearn.model_selection import cross_val_score
                     
-                    rf_model_h8 = RandomForestRegressor(n_estimators=100, max_depth=5, random_state=42)
-                    cv_scores_h8 = cross_val_score(rf_model_h8, X_h8, y_h8, cv=5, scoring='r2')
-                    rf_model_h8.fit(X_h8, y_h8)
+                        rf_model_h8 = RandomForestRegressor(n_estimators=100, max_depth=5, random_state=42)
+                        cv_scores_h8 = cross_val_score(rf_model_h8, X_h8, y_h8, cv=5, scoring='r2')
+                        rf_model_h8.fit(X_h8, y_h8)
                     
-                    importances_h8 = pd.DataFrame({
-                        'feature': feat_labels_h8,
-                        'importance': rf_model_h8.feature_importances_
-                    }).sort_values('importance', ascending=False)
+                        importances_h8 = pd.DataFrame({
+                            'feature': feat_labels_h8,
+                            'importance': rf_model_h8.feature_importances_
+                        }).sort_values('importance', ascending=False)
                     
-                    top_predictor_h8 = importances_h8.iloc[0]['feature']
+                        top_predictor_h8 = importances_h8.iloc[0]['feature']
                     
-                    kpi_ml_h8 = [
-                        ("Model", "Random Forest Regressor", "#3498db", "Non-linear variance tracking"),
-                        ("CV R² (mean ± std)", f"{cv_scores_h8.mean():.3f} ± {cv_scores_h8.std():.3f}", "#2ecc71", f"5-fold cross-validation"),
-                        ("Groups modeled", n_groups, "#e74c3c", f"Target Group Size = {GROUP_SIZE}"),
-                        ("Top driver of dilution", top_predictor_h8, "#f1c40f", "Highest feature importance"),
-                    ]
-                    render_kpi_row(kpi_ml_h8)
-                    st.write("")
+                        kpi_ml_h8 = [
+                            ("Model", "Random Forest Regressor", "#3498db", "Non-linear variance tracking"),
+                            ("CV R² (mean ± std)", f"{cv_scores_h8.mean():.3f} ± {cv_scores_h8.std():.3f}", "#2ecc71", f"5-fold cross-validation"),
+                            ("Groups modeled", n_groups, "#e74c3c", f"Target Group Size = {GROUP_SIZE}"),
+                            ("Top driver of dilution", top_predictor_h8, "#f1c40f", "Highest feature importance"),
+                        ]
+                        render_kpi_row(kpi_ml_h8)
+                        st.write("")
 
-                    fig_imp_h8, ax_imp_h8 = plt.subplots(figsize=(9, 3))
-                    imp_plot_h8 = importances_h8.sort_values('importance')
-                    ax_imp_h8.barh(imp_plot_h8['feature'], imp_plot_h8['importance'], color='#3498db', edgecolor='white')
-                    ax_imp_h8.set_xlabel("Feature importance (MSE reduction)", fontsize=9, fontweight='bold', color='#1a1a2e')
-                    ax_imp_h8.grid(axis='x', linestyle=':', alpha=0.4)
-                    style_axes(ax_imp_h8)
-                    plt.tight_layout(pad=1.2)
-                    st.pyplot(fig_imp_h8)
-                    plt.close(fig_imp_h8)
-                    st.caption(
-                        "If 'Variance among micro peaks' dominates, dilution is driven by how spiky one specific localized segment is "
-                        "relative to its immediate neighbors — not simply by how many segments get clubbed together."
-                    )
-                except ImportError:
-                    st.warning("`scikit-learn` is not installed in your environment. The Random Forest regression cross-check has been bypassed. Run `pip install scikit-learn` to enable this module.")
-            else:
-                st.info(f"Only {n_groups} macro-groups were formed — not enough to fit a reliable cross-validated machine learning model. Try a smaller group size to generate more groups.")
+                        fig_imp_h8, ax_imp_h8 = plt.subplots(figsize=(9, 3))
+                        imp_plot_h8 = importances_h8.sort_values('importance')
+                        ax_imp_h8.barh(imp_plot_h8['feature'], imp_plot_h8['importance'], color='#3498db', edgecolor='white')
+                        ax_imp_h8.set_xlabel("Feature importance (MSE reduction)", fontsize=9, fontweight='bold', color='#1a1a2e')
+                        ax_imp_h8.grid(axis='x', linestyle=':', alpha=0.4)
+                        style_axes(ax_imp_h8)
+                        plt.tight_layout(pad=1.2)
+                        st.pyplot(fig_imp_h8)
+                        plt.close(fig_imp_h8)
+                        st.caption(
+                            "If 'Variance among micro peaks' dominates, dilution is driven by how spiky one specific localized segment is "
+                            "relative to its immediate neighbors — not simply by how many segments get clubbed together."
+                        )
+                    except ImportError:
+                        st.warning("`scikit-learn` is not installed in your environment. The Random Forest regression cross-check has been bypassed. Run `pip install scikit-learn` to enable this module.")
+                else:
+                    st.info(f"Only {n_groups} macro-groups were formed — not enough to fit a reliable cross-validated machine learning model. Try a smaller group size to generate more groups.")
 
-            st.write("---")
-            section_title("Executive Summary and Next Steps for Engineering Teams")
-            render_callout(
-                f"<b>Worst macro-group: <code>{top_group['macro_group_id']}</code></b> ({top_group['corridor_name']}, "
-                f"clubbing {top_group['n_segments']} segments: {top_group['segments']})<br><br>"
-                f"• Worst constituent micro-segment peak TTI: {top_group['max_micro_peak_tti']:.2f}<br>"
-                f"• Combined macro-segment peak TTI (what a link-average dashboard reports): {top_group['macro_peak_tti']:.2f}<br>"
-                f"• Underreporting gap: {top_group['underreport_pct']:.0f}% of real severity mathematically averaged away.<br><br>"
-                f"<b>Action for field teams:</b> Move monitoring for this corridor strictly to individual micro-segment "
-                f"resolution rather than the current macro-grouping. This comparison used entirely real telemetry and "
-                f"actual topological adjacency, meaning the gap reported here is a genuine measurement of hidden congestion, not a theoretical projection.",
-                border_color="#f1c40f"
-            )
- 
-
-
+                st.write("---")
+                section_title("Executive Summary and Next Steps for Engineering Teams")
+                render_callout(
+                    f"<b>Worst macro-group: <code>{top_group['macro_group_id']}</code></b> ({top_group['corridor_name']}, "
+                    f"clubbing {top_group['n_segments']} segments: {top_group['segments']})<br><br>"
+                    f"• Worst constituent micro-segment peak TTI: {top_group['max_micro_peak_tti']:.2f}<br>"
+                    f"• Combined macro-segment peak TTI (what a link-average dashboard reports): {top_group['macro_peak_tti']:.2f}<br>"
+                    f"• Underreporting gap: {top_group['underreport_pct']:.0f}% of real severity mathematically averaged away.<br><br>"
+                    f"<b>Action for field teams:</b> Move monitoring for this corridor strictly to individual micro-segment "
+                    f"resolution rather than the current macro-grouping. This comparison used entirely real telemetry and "
+                    f"actual topological adjacency, meaning the gap reported here is a genuine measurement of hidden congestion, not a theoretical projection.",
+                    border_color="#f1c40f"
+                )
     # =============================================================================
     # MODULE TAB 9: HYPOTHESIS 9 - TAXONOMY CLUSTERING — (ARUSHI)
     # =============================================================================
