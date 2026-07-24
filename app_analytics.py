@@ -6360,7 +6360,7 @@ def main():
         )
 
         # ==============================================================================
-        # 1. BUSINESS QUESTION
+        # 1. BUSINESS QUESTION & METHODOLOGY
         # ==============================================================================
         section_title("Business Question")
         st.markdown(
@@ -6407,10 +6407,10 @@ def main():
         st.write("---")
 
         # ==============================================================================
-        # 2. SCOPE & TEMPORAL DRILLDOWN CONTROLS
+        # 2. SCOPE, TEMPORAL & CATEGORY DRILLDOWN CONTROLS
         # ==============================================================================
         section_title("Drilldown Controls")
-        ctl_h9_a, ctl_h9_b = st.columns(2)
+        ctl_h9_a, ctl_h9_b, ctl_h9_c = st.columns(3)
         with ctl_h9_a:
             corridor_opts_h9 = ["All Network"]
             if "corridor_name" in df_fetched.columns:
@@ -6418,24 +6418,30 @@ def main():
             scope_h9 = st.selectbox("🛣️ Scope", corridor_opts_h9, key="h9_scope_select")
         with ctl_h9_b:
             temporal_h9 = st.selectbox(
-                "⏱️ Temporal Slice (drives Graph 2 / Graph 5 composite-delay views)",
+                "⏱️ Temporal Slice",
                 ["Whole-Day", "AM Peak (07:00–10:00)", "PM Peak (17:00–20:00)", "Off-Peak (23:00–05:00)"],
                 key="h9_temporal_select"
             )
+        with ctl_h9_c:
+            CATEGORY_OPTIONS_H9 = [
+                "All Categories / Network Overview",
+                "Chronic Structural Deficit Only",
+                "Operational Peak Shock Only",
+                "Tidal Commuter Only",
+                "Stable Baseline Only",
+                "Overlapping / Hybrid Corridors Only",
+            ]
+            category_h9 = st.selectbox("🏷️ Category / Archetype Filter", CATEGORY_OPTIONS_H9, key="h9_category_select")
+        st.caption(
+            "The **Category filter** drives the spatial map, ledger, PCA maps, temporal drift plot, soft-membership "
+            "heatmap, and parallel coordinates plot below. KPI counts and leaderboards always reflect the full "
+            "scope so filtered views can be compared back to network totals."
+        )
 
         AM_HOURS_H9, PM_HOURS_H9, OFF_HOURS_H9 = [7, 8, 9], [17, 18, 19], [23, 0, 1, 2, 3, 4, 5]
 
-        def _h9_slice_mask(hour_series, label):
-            if label.startswith("AM"):
-                return hour_series.isin(AM_HOURS_H9)
-            if label.startswith("PM"):
-                return hour_series.isin(PM_HOURS_H9)
-            if label.startswith("Off"):
-                return hour_series.isin(OFF_HOURS_H9)
-            return pd.Series(True, index=hour_series.index)
-
         # ==============================================================================
-        # 3. DATA COMPILING & COMPONENT TRANSFORMATION
+        # 3. DATA COMPILING & GMM SOFT CLUSTERING ENGINE
         # ==============================================================================
         df_tax_raw = df_fetched.copy()
         if 'lat' not in df_tax_raw.columns or 'lon' not in df_tax_raw.columns:
@@ -6511,7 +6517,13 @@ def main():
                 "Chronic Structural": "#991B1B", "Operational Peak Shock": "#D97706",
                 "Tidal Commuter": "#1E40AF", "Stable Baseline": "#166534",
             }
-            ordered_component_ix = [k for k, _ in sorted(label_map_h9.items(), key=lambda kv: ARCHETYPES_H9.index(kv[1]))]
+            HYBRID_COLOR_H9 = "#7C3AED"
+            POLICY_BLEND_H9 = {
+                "Chronic Structural": "structural widening",
+                "Operational Peak Shock": "adaptive signal retiming",
+                "Tidal Commuter": "reversible-lane deployment",
+                "Stable Baseline": "routine monitoring only",
+            }
             for arch in ARCHETYPES_H9:
                 comp_ix = [k for k, v in label_map_h9.items() if v == arch][0]
                 df_tax_base[f"prob_{arch}"] = soft_probs_h9[:, comp_ix]
@@ -6530,8 +6542,115 @@ def main():
             pca_coords_h9 = pca_h9.fit_transform(X_h9_scaled)
             df_tax_base['PC1'], df_tax_base['PC2'] = pca_coords_h9[:, 0], pca_coords_h9[:, 1]
 
+            # ── Apply Category / Archetype Filter ──
+            CATEGORY_TO_ARCH_H9 = {
+                "Chronic Structural Deficit Only": "Chronic Structural",
+                "Operational Peak Shock Only": "Operational Peak Shock",
+                "Tidal Commuter Only": "Tidal Commuter",
+                "Stable Baseline Only": "Stable Baseline",
+            }
+            if category_h9 == "All Categories / Network Overview":
+                cat_mask_h9 = pd.Series(True, index=df_tax_base.index)
+            elif category_h9 == "Overlapping / Hybrid Corridors Only":
+                cat_mask_h9 = df_tax_base['is_hybrid']
+            else:
+                cat_mask_h9 = df_tax_base['primary_archetype'] == CATEGORY_TO_ARCH_H9[category_h9]
+            df_tax_view = df_tax_base[cat_mask_h9].copy()
+            if df_tax_view.empty:
+                df_tax_view = df_tax_base.copy()
+                st.info(f"ℹ️ No segments match **{category_h9}** in this scope/slice — showing full network view.")
+
             # ==============================================================================
-            # 4. KPI HEADER ROW
+            # 4. RESTORED SPATIAL MAP & SEGMENT CLASSIFICATION LEDGER
+            # ==============================================================================
+            section_title("Spatial Matrix Map & Segment Classification Ledger")
+            st.markdown(
+                f'<div class="h1-section-sub">Interactive OSM/Folium view — currently filtered to '
+                f'<b>{category_h9}</b></div>', unsafe_allow_html=True
+            )
+            c_map, c_panel = st.columns([3, 2])
+            center_lat_h9 = df_tax_view["lat"].dropna().mean() if df_tax_view["lat"].notna().any() else df_tax_base["lat"].mean()
+            center_lon_h9 = df_tax_view["lon"].dropna().mean() if df_tax_view["lon"].notna().any() else df_tax_base["lon"].mean()
+
+            with c_map:
+                m9 = folium.Map(location=[center_lat_h9, center_lon_h9], zoom_start=11, tiles="CartoDB positron")
+
+                legend_html_h9 = """
+                <div style="position:fixed; bottom:30px; left:30px; z-index:9999; background:white;
+                            padding:12px 16px; border-radius:8px; border:1px solid #CBD5E1;
+                            box-shadow: 0 2px 6px rgba(0,0,0,0.2); font-size:12px; font-family:sans-serif; color:#000000 !important;">
+                  <b style="color:#000000 !important; font-size:13px;">Policy Archetypes</b><br>
+                  <hr style="margin:4px 0 8px 0; border:0; border-top:1px solid #E2E8F0;">
+                  <span style="color:#991B1B; font-size:14px;">&#9632;</span> <span style="color:#000000 !important; font-weight:600;">Chronic Structural Deficit</span><br>
+                  <span style="color:#D97706; font-size:14px;">&#9632;</span> <span style="color:#000000 !important; font-weight:600;">Operational Peak Shock</span><br>
+                  <span style="color:#1E40AF; font-size:14px;">&#9632;</span> <span style="color:#000000 !important; font-weight:600;">Tidal Commuter Corridor</span><br>
+                  <span style="color:#166534; font-size:14px;">&#9632;</span> <span style="color:#000000 !important; font-weight:600;">Stable Baseline</span><br>
+                  <span style="color:#7C3AED; font-size:15px;">&#9733;</span> <span style="color:#000000 !important; font-weight:600;">Overlapping / Hybrid (star)</span>
+                </div>"""
+                m9.get_root().html.add_child(folium.Element(legend_html_h9))
+
+                for _, r in df_tax_view.dropna(subset=["lat", "lon"]).iterrows():
+                    primary_pct = r['primary_prob'] * 100
+                    secondary_line = (
+                        f"<b>Secondary:</b> {r['secondary_archetype']} ({r['secondary_prob'] * 100:.1f}%)<br>"
+                        if r['is_hybrid'] else ""
+                    )
+                    intervention_txt = (
+                        f"{POLICY_BLEND_H9[r['primary_archetype']]} + {POLICY_BLEND_H9[r['secondary_archetype']]}"
+                        if r['is_hybrid'] else POLICY_BLEND_H9[r['primary_archetype']]
+                    )
+                    tooltip_html = (
+                        f"<b>Segment:</b> {r['shapefile_segment_name']}<br>"
+                        f"<b>Corridor:</b> {r['corridor_name']}<br>"
+                        f"<b>Primary:</b> {r['primary_archetype']} ({primary_pct:.1f}%)<br>"
+                        f"{secondary_line}"
+                        f"<b>Peak TTI:</b> {r['mu_peak']:.2f} · <b>Off-Peak TTI:</b> {r['mu_offpeak']:.2f} · <b>BTI:</b> {r['bti_val']:.1f}%<br>"
+                        f"<b>Recommended Intervention:</b> {intervention_txt}"
+                    )
+                    if r['is_hybrid']:
+                        star_icon = folium.DivIcon(html=(
+                            f'<div style="font-size:22px; line-height:22px; color:{HYBRID_COLOR_H9}; '
+                            f'text-shadow: -1px 0 #0F172A, 0 1px #0F172A, 1px 0 #0F172A, 0 -1px #0F172A;">&#9733;</div>'
+                        ))
+                        folium.Marker([r["lat"], r["lon"]], icon=star_icon, tooltip=tooltip_html).add_to(m9)
+                    else:
+                        cluster_color = ARCH_COLORS_H9.get(r['primary_archetype'], '#7F7F7F')
+                        folium.CircleMarker(
+                            [r["lat"], r["lon"]], radius=6, color=cluster_color, fill=True,
+                            fill_color=cluster_color, fill_opacity=0.9, weight=1.5,
+                            tooltip=tooltip_html
+                        ).add_to(m9)
+
+                st_folium(m9, height=480, use_container_width=True, returned_objects=[], key="map_geo_taxonomy")
+
+            with c_panel:
+                ledger_view = df_tax_view.sort_values('primary_prob', ascending=False)[
+                    ['shapefile_segment_name', 'corridor_name', 'primary_archetype', 'primary_prob',
+                     'secondary_archetype', 'secondary_prob', 'mu_peak', 'mu_offpeak', 'bti_val', 'is_hybrid']
+                ].rename(columns={
+                    'shapefile_segment_name': 'Segment', 'corridor_name': 'Corridor', 'primary_archetype': 'Primary',
+                    'primary_prob': 'Primary %', 'secondary_archetype': 'Secondary', 'secondary_prob': 'Secondary %',
+                    'mu_peak': 'Peak TTI', 'mu_offpeak': 'Off-Peak TTI', 'bti_val': 'BTI %', 'is_hybrid': 'Hybrid?'
+                })
+                st.dataframe(
+                    ledger_view.style.format({
+                        'Primary %': '{:.1%}', 'Secondary %': '{:.1%}', 'Peak TTI': '{:.2f}',
+                        'Off-Peak TTI': '{:.2f}', 'BTI %': '{:.1f}%'
+                    }).set_properties(**{'font-size': '12px'}).set_table_styles([
+                        {'selector': 'th', 'props': [('background-color', '#1A293B'), ('color', 'white'), ('font-weight', '600')]}
+                    ]),
+                    width="stretch", hide_index=True, height=440
+                )
+            st.caption(
+                f"📊 **Statistical Verdict:** {len(df_tax_view)} of {len(df_tax_base)} monitored micro-segments match "
+                f"the current filter (**{category_h9}**); star markers represent high-risk hybrids. "
+                f"🏛️ **Business Insight & CUMTA Intervention:** Use the ledger's Recommended Intervention column "
+                f"as a direct dispatch sheet for the filtered cohort."
+            )
+            st.write("---")
+
+            # ==============================================================================
+            # 5. KPI HEADER ROW
             # ==============================================================================
             kpi_defs = [
                 (f"{a}" if len(a) < 18 else a.split()[0], int((df_tax_base['primary_archetype'] == a).sum()), ARCH_COLORS_H9[a], f"Primary-archetype segments")
@@ -6548,7 +6667,53 @@ def main():
             st.write("---")
 
             # ==============================================================================
-            # 5. LEADERBOARD TABLES
+            # 6. ORIGINAL PRESERVED PCA & CORRELATION MATRIX PANELS
+            # ==============================================================================
+            section_title("Unsupervised Feature Spaces & Variance Check Grids (Original Baseline)")
+            col_og1, col_og2 = st.columns(2)
+            
+            with col_og1:
+                fig_corr = plt.figure(figsize=(6, 5), facecolor='white')
+                ax_corr = fig_corr.add_subplot(111, facecolor='white')
+                corr_cmap = sns.diverging_palette(220, 10, s=90, l=35, as_cmap=True)
+                sns.heatmap(
+                    pd.DataFrame(X_h9_scaled, columns=feat_cols_h9).corr().abs(), annot=True, fmt=".2f", cmap=corr_cmap, ax=ax_corr, cbar=False,
+                    linewidths=1.0, linecolor='white', annot_kws={"color": "#0F172A", "fontweight": "bold", "fontsize": 8},
+                    vmin=0, vmax=1,
+                )
+                style_axes(ax_corr)
+                st.pyplot(fig_corr)
+                plt.close(fig_corr)
+                st.caption(
+                    "📊 **Statistical Verdict:** Pearson collinearity check across standardized clustering features. "
+                    "Cells closer to 1.0 (deep red) flag metrics carrying redundant signal."
+                )
+
+            with col_og2:
+                fig_pca_og = plt.figure(figsize=(6, 5), facecolor='white')
+                ax_pca_og = fig_pca_og.add_subplot(111, facecolor='white')
+                sns.scatterplot(
+                    data=df_tax_base, x='PC1', y='PC2', hue='primary_archetype', palette=ARCH_COLORS_H9, s=80,
+                    ax=ax_pca_og, edgecolor='#0F172A', linewidth=0.8, alpha=0.90,
+                )
+                ax_pca_og.set_xlabel("Principal Component 1 (Congestion Severity)", color='#0F172A', fontweight='bold', fontsize=8)
+                ax_pca_og.set_ylabel("Principal Component 2 (Unpredictability / Asymmetry)", color='#0F172A', fontweight='bold', fontsize=8)
+                ax_pca_og.grid(True, linestyle=':', alpha=0.3, color='#94A3B8')
+                leg_og = ax_pca_og.legend(loc='best', frameon=True, facecolor='white', edgecolor='#CBD5E1', fontsize=7.5)
+                for text_h in leg_og.get_texts():
+                    text_h.set_color('#0F172A')
+                style_axes(ax_pca_og)
+                st.pyplot(fig_pca_og)
+                plt.close(fig_pca_og)
+                st.caption(
+                    "📊 **Statistical Verdict:** Baseline 2D PCA projection of hard primary assignments. "
+                    "Well-separated color clusters confirm distinct underlying behavior profiles."
+                )
+
+            st.write("---")
+
+            # ==============================================================================
+            # 7. LEADERBOARD TABLES
             # ==============================================================================
             section_title("Top Separated & Vulnerable Segment Leaderboards")
             lb_col1, lb_col2 = st.columns(2)
@@ -6569,12 +6734,6 @@ def main():
 
             with lb_col2:
                 st.markdown("**⚠️ Top 10 High-Risk Hybrid / Overlapping Segments**")
-                POLICY_BLEND_H9 = {
-                    "Chronic Structural": "structural widening",
-                    "Operational Peak Shock": "adaptive signal retiming",
-                    "Tidal Commuter": "reversible-lane deployment",
-                    "Stable Baseline": "routine monitoring only",
-                }
                 hybrid_h9 = df_tax_base[df_tax_base['is_hybrid']].copy()
                 hybrid_h9['overlap_margin'] = hybrid_h9['primary_prob'] - hybrid_h9['secondary_prob']
                 hybrid_h9 = hybrid_h9.sort_values('overlap_margin', ascending=True).head(10)
@@ -6597,39 +6756,48 @@ def main():
             st.markdown(
                 "📊 **Statistical Verdict:** Purity separates segments the GMM is confident about from segments "
                 "sitting genuinely between two Gaussian components. 🏛️ **Business Insight:** Hybrid segments should "
-                "receive a **blended** CapEx package (both interventions, sized by their respective membership "
-                "weight) rather than the single-archetype template applied to purely-separated segments."
+                "receive a **blended** CapEx package rather than a single-archetype template."
             )
             st.write("---")
 
             # ==============================================================================
-            # 6. GRAPH 1 — PCA POLICY ARCHETYPE MAP
+            # 8. GRAPH 1 — MULTI-AXIS PCA POLICY ARCHETYPE MAP
             # ==============================================================================
-            section_title("Graph 1 · Multi-Axis PCA Policy Archetype Map")
+            section_title("Graph 1 · Multi-Axis PCA Policy Archetype Map (Filtered Cohort vs. Rest)")
             fig_g1 = go.Figure()
+            show_dimmed_bg = category_h9 != "All Categories / Network Overview"
+            if show_dimmed_bg:
+                bg = df_tax_base[~cat_mask_h9]
+                fig_g1.add_trace(go.Scatter(
+                    x=bg['PC1'], y=bg['PC2'], mode='markers', name='Rest of network',
+                    marker=dict(size=8, color='#CBD5E1', line=dict(width=0.5, color='#94A3B8')),
+                    opacity=0.55, hoverinfo='skip'
+                ))
             for arch in ARCHETYPES_H9:
-                sub = df_tax_base[(df_tax_base['primary_archetype'] == arch) & (~df_tax_base['is_hybrid'])]
+                sub = df_tax_view[(df_tax_view['primary_archetype'] == arch) & (~df_tax_view['is_hybrid'])]
+                if sub.empty:
+                    continue
                 fig_g1.add_trace(go.Scatter(
                     x=sub['PC1'], y=sub['PC2'], mode='markers', name=arch,
-                    marker=dict(size=10, color=ARCH_COLORS_H9[arch], line=dict(width=1, color='#0F172A')),
+                    marker=dict(size=11, color=ARCH_COLORS_H9[arch], line=dict(width=1, color='#0F172A')),
                     customdata=np.stack([sub['shapefile_segment_name'], sub['corridor_name'],
                                           sub['primary_prob'] * 100, sub['secondary_archetype'], sub['secondary_prob'] * 100], axis=-1),
                     hovertemplate="<b>%{customdata[0]}</b><br>Corridor: %{customdata[1]}<br>"
                                   f"Primary: {arch} — " + "%{customdata[2]:.1f}%<br>"
                                   "Secondary: %{customdata[3]} — %{customdata[4]:.1f}%<extra></extra>"
                 ))
-            hyb = df_tax_base[df_tax_base['is_hybrid']]
-            fig_g1.add_trace(go.Scatter(
-                x=hyb['PC1'], y=hyb['PC2'], mode='markers', name='Overlapping / Hybrid',
-                marker=dict(size=15, color=hyb['primary_archetype'].map(ARCH_COLORS_H9), symbol='star',
-                            line=dict(width=1.5, color='#0F172A')),
-                customdata=np.stack([hyb['shapefile_segment_name'], hyb['corridor_name'],
-                                      hyb['primary_archetype'], hyb['primary_prob'] * 100,
-                                      hyb['secondary_archetype'], hyb['secondary_prob'] * 100], axis=-1),
-                hovertemplate="<b>%{customdata[0]}</b> (HYBRID)<br>Corridor: %{customdata[1]}<br>"
-                              "Primary: %{customdata[2]} — %{customdata[3]:.1f}%<br>"
-                              "Secondary: %{customdata[4]} — %{customdata[5]:.1f}%<extra></extra>"
-            ))
+            hyb = df_tax_view[df_tax_view['is_hybrid']]
+            if not hyb.empty:
+                fig_g1.add_trace(go.Scatter(
+                    x=hyb['PC1'], y=hyb['PC2'], mode='markers', name='Overlapping / Hybrid',
+                    marker=dict(size=16, color=HYBRID_COLOR_H9, symbol='star', line=dict(width=1.5, color='#0F172A')),
+                    customdata=np.stack([hyb['shapefile_segment_name'], hyb['corridor_name'],
+                                          hyb['primary_archetype'], hyb['primary_prob'] * 100,
+                                          hyb['secondary_archetype'], hyb['secondary_prob'] * 100], axis=-1),
+                    hovertemplate="<b>%{customdata[0]}</b> (HYBRID)<br>Corridor: %{customdata[1]}<br>"
+                                  "Primary: %{customdata[2]} — %{customdata[3]:.1f}%<br>"
+                                  "Secondary: %{customdata[4]} — %{customdata[5]:.1f}%<extra></extra>"
+                ))
             fig_g1.update_layout(
                 xaxis_title="PC1: Congestion Severity [higher = more structurally delayed]",
                 yaxis_title="PC2: Travel Unpredictability [higher = more volatile / tidal]",
@@ -6637,34 +6805,38 @@ def main():
                 margin=dict(t=20)
             )
             st.plotly_chart(fig_g1, use_container_width=True)
-            n_pure_g1 = int((~df_tax_base['is_hybrid']).sum())
             st.caption(
-                f"📊 **Statistical Verdict:** {n_pure_g1} segments project into tight, single-archetype clusters; "
-                f"{n_hybrid_h9} star-marked segments sit in the geometric overlap between two Gaussians. "
-                f"🏛️ **Business Insight & CUMTA Intervention:** Treat star-marked segments as **dual-track** capital "
-                f"projects — do not force them into whichever archetype template happens to sort first."
+                f"📊 **Statistical Verdict:** {len(df_tax_view)} segments match **{category_h9}**"
+                + (f" and are highlighted against the {len(df_tax_base) - len(df_tax_view)} gray background points"
+                   if show_dimmed_bg else " across the full network")
+                + ". 🏛️ **Business Insight & CUMTA Intervention:** Star-marked segments are dual-track capital "
+                  "projects — do not force them into whichever archetype template happens to sort first."
             )
             st.write("---")
 
             # ==============================================================================
-            # 7. GRAPH 2 — TEMPORAL DRIFT SLOPE PLOT
+            # 9. GRAPH 2 — TEMPORAL DRIFT SLOPE PLOT
             # ==============================================================================
             section_title("Graph 2 · Temporal Drift Profile (Off-Peak → AM Peak → PM Peak)")
             df_tax_base['composite_offpeak'] = 0.6 * df_tax_base['mu_offpeak'] + 0.4 * (df_tax_base['bti_val'] / 100)
             df_tax_base['composite_am'] = 0.6 * df_tax_base['mu_am'] + 0.4 * (df_tax_base['bti_val'] / 100)
             df_tax_base['composite_pm'] = 0.6 * df_tax_base['mu_pm'] + 0.4 * (df_tax_base['bti_val'] / 100)
+            df_tax_view['composite_offpeak'] = 0.6 * df_tax_view['mu_offpeak'] + 0.4 * (df_tax_view['bti_val'] / 100)
+            df_tax_view['composite_am'] = 0.6 * df_tax_view['mu_am'] + 0.4 * (df_tax_view['bti_val'] / 100)
+            df_tax_view['composite_pm'] = 0.6 * df_tax_view['mu_pm'] + 0.4 * (df_tax_view['bti_val'] / 100)
 
             fig_g2 = go.Figure()
-            sample_n_g2 = min(40, len(df_tax_base))
-            sample_g2 = df_tax_base.sample(sample_n_g2, random_state=7)
+            sample_n_g2 = min(40, len(df_tax_view))
+            sample_g2 = df_tax_view.sample(sample_n_g2, random_state=7)
             for _, r in sample_g2.iterrows():
                 fig_g2.add_trace(go.Scatter(
                     x=["Off-Peak", "AM Peak", "PM Peak"],
                     y=[r['composite_offpeak'], r['composite_am'], r['composite_pm']],
-                    mode='lines', line=dict(width=1, color=ARCH_COLORS_H9[r['primary_archetype']]),
-                    opacity=0.25, showlegend=False, hoverinfo='skip'
+                    mode='lines',
+                    line=dict(width=1, color=HYBRID_COLOR_H9 if r['is_hybrid'] else ARCH_COLORS_H9[r['primary_archetype']]),
+                    opacity=0.3, showlegend=False, hoverinfo='skip'
                 ))
-            arch_traj = df_tax_base.groupby('primary_archetype')[['composite_offpeak', 'composite_am', 'composite_pm']].mean()
+            arch_traj = df_tax_view.groupby('primary_archetype')[['composite_offpeak', 'composite_am', 'composite_pm']].mean()
             for arch in ARCHETYPES_H9:
                 if arch in arch_traj.index:
                     fig_g2.add_trace(go.Scatter(
@@ -6681,44 +6853,45 @@ def main():
             st.plotly_chart(fig_g2, use_container_width=True)
             worst_jump_arch = (arch_traj['composite_am'] - arch_traj['composite_offpeak']).idxmax() if len(arch_traj) else "N/A"
             st.caption(
-                f"📊 **Statistical Verdict:** Faint lines are individual segments (sampled to {sample_n_g2} for "
-                f"legibility); bold lines are archetype-average trajectories. **{worst_jump_arch}** shows the "
-                f"steepest Off-Peak → AM-Peak jump. 🏛️ **Business Insight & CUMTA Intervention:** Corridors whose "
-                f"individual lines diverge sharply from their archetype average are early candidates for "
-                f"re-classification next cycle — deploy **adaptive signal timing** ahead of the peak-hour jump."
+                f"📊 **Statistical Verdict:** Faint lines are individual segments from **{category_h9}** (sampled to "
+                f"{sample_n_g2} for legibility); bold lines are archetype-average trajectories within that filter. "
+                f"**{worst_jump_arch}** shows the steepest Off-Peak → AM-Peak jump. 🏛️ **Business Insight & CUMTA "
+                f"Intervention:** Corridors whose individual lines diverge sharply from their archetype average are "
+                f"early candidates for re-classification next cycle — deploy **adaptive signal timing** ahead of "
+                f"the peak-hour jump."
             )
             st.write("---")
 
             # ==============================================================================
-            # 8. GRAPH 3 — FULL-NETWORK SOFT-MEMBERSHIP HEATMAP
+            # 10. GRAPH 3 — FULL-NETWORK SOFT-MEMBERSHIP HEATMAP
             # ==============================================================================
-            section_title("Graph 3 · Full-Network Soft-Membership Matrix")
-            heat_df = df_tax_base.sort_values(['corridor_name', 'shapefile_segment_name'])
+            section_title("Graph 3 · Soft-Membership Matrix")
+            heat_df = df_tax_view.sort_values(['corridor_name', 'shapefile_segment_name'])
             z_heat = heat_df[[f"prob_{a}" for a in ARCHETYPES_H9]].values * 100
             fig_g3 = go.Figure(data=go.Heatmap(
                 z=z_heat, x=ARCHETYPES_H9, y=heat_df['shapefile_segment_name'],
                 colorscale='RdYlBu_r', colorbar=dict(title="Membership %"), zmin=0, zmax=100
             ))
-            heat_height = max(420, min(1400, 14 * len(heat_df)))
+            heat_height = max(420, min(1400, 14 * max(len(heat_df), 1)))
             fig_g3.update_layout(
                 xaxis_title="Policy Archetype", yaxis_title="Micro-Segment (grouped by corridor, alphabetical)",
                 template="plotly_white", height=heat_height, margin=dict(t=20)
             )
             st.plotly_chart(fig_g3, use_container_width=True)
             st.caption(
-                "📊 **Statistical Verdict:** Rows with one dominant deep cell are cleanly separated; rows with two "
-                "comparably warm cells are the hybrid segments already flagged above. 🏛️ **Business Insight & "
-                "CUMTA Intervention:** Use this matrix as the master audit sheet when sizing next fiscal year's "
-                "blended CapEx allocation across archetypes."
+                f"📊 **Statistical Verdict:** Showing {len(heat_df)} segments matching **{category_h9}**. Rows with "
+                f"one dominant deep cell are cleanly separated; rows with two comparably warm cells are hybrid "
+                f"segments. 🏛️ **Business Insight & CUMTA Intervention:** Use this matrix as the master audit sheet "
+                f"when sizing next fiscal year's blended CapEx allocation for the selected cohort."
             )
             st.write("---")
 
             # ==============================================================================
-            # 9. GRAPH 4 — PARALLEL COORDINATES FEATURE PROFILE
+            # 11. GRAPH 4 — PARALLEL COORDINATES FEATURE PROFILE
             # ==============================================================================
             section_title("Graph 4 · Segment Feature Profile (Parallel Coordinates)")
             arch_code_map = {a: i for i, a in enumerate(ARCHETYPES_H9)}
-            pcoord_df = df_tax_base.copy()
+            pcoord_df = df_tax_view.copy()
             pcoord_df['archetype_code'] = pcoord_df['primary_archetype'].map(arch_code_map)
             fig_g4 = go.Figure(data=go.Parcoords(
                 line=dict(color=pcoord_df['archetype_code'],
@@ -6736,18 +6909,17 @@ def main():
             fig_g4.update_layout(template="plotly_white", height=480, margin=dict(t=30))
             st.plotly_chart(fig_g4, use_container_width=True)
             st.caption(
-                "📊 **Statistical Verdict:** A line that stays near the extremes across every axis is a purely "
-                "separated segment; a line whose color sits between two archetype hues while zig-zagging between "
-                "high and mid bands on different features is a hybrid case. 🏛️ **Business Insight & CUMTA "
-                "Intervention:** This view explains *why* a segment overlaps — e.g. high BTI (peak-shock trait) "
-                "combined with high Lambda_max (tidal trait) — so the blended CapEx package can be feature-justified."
+                f"📊 **Statistical Verdict:** {len(pcoord_df)} segments from **{category_h9}** plotted across all "
+                f"five clustering features simultaneously. 🏛️ **Business Insight & CUMTA Intervention:** This view "
+                f"explains *why* a segment overlaps — e.g. high BTI (peak-shock trait) combined with high "
+                f"Lambda_max (tidal trait) — so the blended CapEx package can be feature-justified."
             )
             st.write("---")
 
             # ==============================================================================
-            # 10. GRAPH 5 — PEAK VS OFF-PEAK CLUSTER DISTRIBUTION SHIFT
+            # 12. GRAPH 5 — PEAK VS OFF-PEAK CLUSTER DISTRIBUTION SHIFT (Network-Wide)
             # ==============================================================================
-            section_title("Graph 5 · Peak vs. Off-Peak Cluster Distribution Shift")
+            section_title("Graph 5 · Peak vs. Off-Peak Cluster Distribution Shift (Network-Wide)")
             centroid_composite = 0.6 * centroids_h9[['mu_am', 'mu_pm', 'mu_offpeak']].mean(axis=1) + 0.4 * (centroids_h9['bti_val'] / 100)
             centroid_composite_by_arch = {label_map_h9[i]: centroid_composite[i] for i in range(4)}
 
@@ -6777,15 +6949,15 @@ def main():
             st.caption(
                 f"📊 **Statistical Verdict:** Each segment is reclassified per slice against the nearest archetype "
                 f"centroid on the composite-delay axis; the Chronic Structural share shifts by "
-                f"**{drift_pp:+.1f} percentage points** from Off-Peak to AM Peak. 🏛️ **Business Insight & CUMTA "
-                f"Intervention:** A network-level drift toward Chronic Structural during peak hours confirms that "
-                f"infrastructure capacity — not just signal timing — is the binding constraint; escalate to the "
-                f"capital works committee rather than the traffic-signal operations desk."
+                f"**{drift_pp:+.1f} percentage points** from Off-Peak to AM Peak. This graph is always network-wide "
+                f"regardless of the Category filter, so it stays a stable system-level reference. 🏛️ **Business "
+                f"Insight & CUMTA Intervention:** A network-level drift toward Chronic Structural during peak hours "
+                f"confirms that infrastructure capacity — not just signal timing — is the binding constraint."
             )
             st.write("---")
 
             # ==============================================================================
-            # 11. HANDOVER MATRIX TABLE
+            # 13. HANDOVER MATRIX TABLE
             # ==============================================================================
             section_title("Capital Expenditure Policy Intervention Matrix")
             policy_t = pd.DataFrame([
@@ -6990,11 +7162,24 @@ def main():
         peak_aqi_hour = df_env_agg.loc[df_env_agg['avg_aqi'].idxmax(), 'derived_hour']
         lag_hours = peak_aqi_hour - peak_tti_hour
         fig_e1.update_layout(
-            xaxis=dict(title="Hour of Day (Diurnal Cycle)", dtick=2),
-            yaxis=dict(title="Travel Time Index (TTI Score) [Deep Red]", titlefont=dict(color='#991B1B'), tickfont=dict(color='#991B1B')),
-            yaxis2=dict(title="Weather-Adjusted AQI [Dark Green]", titlefont=dict(color='#166534'), tickfont=dict(color='#166534'),
-                        overlaying='y', side='right'),
-            template="plotly_white", height=480, legend=dict(orientation='h', y=-0.2), margin=dict(t=30)
+            xaxis=dict(
+                title=dict(text="Hour of Day (Diurnal Cycle) [IST 24-Hour Clock]", font=dict(color="#0F172A", size=12)),
+                dtick=2
+            ),
+            yaxis=dict(
+                title=dict(text="Travel Time Index (TTI Score)", font=dict(color="#991B1B", size=12)), # ✅ Correct key
+                tickfont=dict(color="#991B1B")
+            ),
+            yaxis2=dict(
+                title=dict(text="Air Quality Index (AQI Scale)", font=dict(color="#166534", size=12)), # ✅ Correct key
+                tickfont=dict(color="#166534"),
+                overlaying="y",
+                side="right"
+            ),
+            template="plotly_white",
+            height=480,
+            legend=dict(orientation="h", y=-0.2),
+            margin=dict(t=30)
         )
         st.plotly_chart(fig_e1, use_container_width=True)
         st.caption(
