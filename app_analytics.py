@@ -2894,20 +2894,41 @@ def main():
                 corr_metrics_map = metrics[metrics['corridor_name'] == corr].set_index('segment_uid')['classification']
  
                 fig4, ax4 = plt.subplots(figsize=(12, 5.0))
-                for seg_uid, seg_sub in case_df.groupby('segment_uid'):
-                    seg_label = metrics.loc[metrics['segment_uid'] == seg_uid, 'segment_id'].iloc[0]
-                    seg_status = corr_metrics_map.get(seg_uid, "No structural issue detected")
+
+                # Split segments into "flagged" (root cause / spillover / untestable) which get
+                # individual color + legend entries, and "normal" segments which are drawn as
+                # thin uncolored background context only — otherwise a corridor with dozens of
+                # segments (almost all "No structural issue detected") paints everything the
+                # same green and produces a legend as long as the segment roster.
+                NORMAL_STATUS = "No structural issue detected"
+                seg_items = list(case_df.groupby('segment_uid'))
+                normal_items = [(u, s) for u, s in seg_items if corr_metrics_map.get(u, NORMAL_STATUS) == NORMAL_STATUS]
+                flagged_items = [(u, s) for u, s in seg_items if corr_metrics_map.get(u, NORMAL_STATUS) != NORMAL_STATUS]
+
+                # Background: normal segments, no individual labels (single combined legend entry)
+                for i, (seg_uid, seg_sub) in enumerate(normal_items):
                     hourly = seg_sub.groupby('hour_of_day')['travel_time_index_tti'].mean()
-                    ax4.plot(hourly.index, hourly.values, marker='o', markersize=4, linewidth=1.6,
-                             color=STATUS_COLORS[seg_status], label=seg_label)
- 
+                    ax4.plot(hourly.index, hourly.values, linewidth=0.8, alpha=0.35,
+                             color='#b0b6bf', zorder=1,
+                             label='No structural issue detected (segments)' if i == 0 else None)
+
+                # Foreground: flagged segments, colored + individually labeled
+                for seg_uid, seg_sub in flagged_items:
+                    seg_label = metrics.loc[metrics['segment_uid'] == seg_uid, 'segment_id'].iloc[0]
+                    seg_status = corr_metrics_map.get(seg_uid, NORMAL_STATUS)
+                    hourly = seg_sub.groupby('hour_of_day')['travel_time_index_tti'].mean()
+                    ax4.plot(hourly.index, hourly.values, marker='o', markersize=4, linewidth=1.8,
+                             color=STATUS_COLORS[seg_status], label=seg_label, zorder=3)
+
                     rc_events = seg_sub[seg_sub['root_cause_event'] == True]
                     if len(rc_events) > 0:
                         rc_hourly = rc_events.groupby('hour_of_day')['travel_time_index_tti'].mean()
                         ax4.scatter(rc_hourly.index, rc_hourly.values, color='#e74c3c', zorder=6, s=130,
                                     marker='X', edgecolors='white', linewidths=1.0, label=f"Verified breakdown ({seg_label})")
- 
-                ax4.set_title(f"Corridor: {corr}", fontsize=11, fontweight='bold', pad=12, color='#1a1a2e')
+
+                ax4.set_title(
+                    f"Corridor: {corr}  ·  {len(flagged_items)} flagged of {len(seg_items)} segments",
+                    fontsize=11, fontweight='bold', pad=12, color='#1a1a2e')
                 ax4.set_xlabel("Hour of day", fontweight='bold', fontsize=9, color='#1a1a2e')
                 ax4.set_ylabel("Mean TTI", fontweight='bold', fontsize=9, color='#1a1a2e')
                 ax4.set_xlim(0, 23)
@@ -2923,7 +2944,7 @@ def main():
  
                 n_rc_total = int(case_df['root_cause_event'].sum())
                 st.caption(
-                    f"The red 'X' markers represent isolated, verified root-cause breakdown events for the specific downstream segment. While the solid red line displays the segment's overall everyday average—which includes normal, clear-flowing days that naturally pull the average down—the 'X' markers plot the extreme severity of the bottleneck only during the specific intervals it actually failed. These markers visually isolate the exact moments where the segment experienced severe gridlock independently while its immediate upstream neighbor remained clear, mathematically proving a localized structural failure rather than a cascading traffic jam."
+                    f"Faint gray lines are the corridor's segments with no structural issue detected, shown only for context. Colored lines are the flagged segments (red = confirmed root cause, yellow = likely spillover, blue = untestable). The red 'X' markers represent isolated, verified root-cause breakdown events for the specific downstream segment. While the solid red line displays the segment's overall everyday average—which includes normal, clear-flowing days that naturally pull the average down—the 'X' markers plot the extreme severity of the bottleneck only during the specific intervals it actually failed. These markers visually isolate the exact moments where the segment experienced severe gridlock independently while its immediate upstream neighbor remained clear, mathematically proving a localized structural failure rather than a cascading traffic jam."
                     f"({n_rc_total} verified instances over the observation window)."
                 )
  
