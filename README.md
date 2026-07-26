@@ -1,216 +1,579 @@
-CUMTA Core Transit Network Diagnostics Cockpit: Technical Reference Manual & README
-1. Executive Overview & System Architecture
-System Summary
-The CUMTA Core Transit Network Diagnostics Cockpit is an advanced, publication-grade spatial-temporal analytics framework engineered for the Chennai Unified Metropolitan Transport Authority (CUMTA). The system ingests high-frequency macroscopic traffic telemetry, environmental data, and static GIS infrastructure mappings to diagnose network bottlenecks, evaluate geometric and environmental constraints, quantify commuter uncertainty, and generate data-driven capital expenditure (CapEx) policies.
-Ingestion Architecture
-GitHub Repository Pointers: Centralized raw data repository configuration leveraging GITHUB_USER = "ArushiMarwaha", GITHUB_REPO = "Transit-Time-Analytics-Dashboard-", and GITHUB_BRANCH = "main", establishing a dynamic base URL (GITHUB_RAW_BASE_URL) pointing directly to the data_store/ directory.
-The fetch_rolling_horizon_dataset() Engine: Implements a rolling lookback architecture that walks backward across a date range [target_date - lookback_days + 1, target_date]. It performs robust HTTP CSV retrieval (_http_get_csv) with an automatic fallback trail to local workspace mirrors (data_store/) to ensure uninterrupted execution during network latency or pipeline delays. Static reference assets (segments_ref.csv and roads_results.csv) are fetched once at boot and cached via Streamlit (st.cache_data). To prevent many-to-many merge explosions from repeated snapshot logs, roads_results.csv is dynamically collapsed to a unique one-row-per-segment reference table using _collapse_to_one_row_per_segment().
-Environmental Alignment (_asof_join_environmental): Binds ~3-hourly environmental frames (weather_results and aqi_results) onto cycle-by-cycle telemetry rows (routes_results) keyed by segment_uid. It enforces a strict tolerance window of ENVIRONMENTAL_JOIN_TOLERANCE = pd.Timedelta("3.5 hours") to prevent silent data borrowing across shifts.
-Mid-Layer Gateway (master_dashboard_data_gateway): Acts as an automated schema sniffer that normalizes column headers, localizes UTC timestamps to Indian Standard Time (Asia/Kolkata IST), extracts geographic coordinates from nested JSON stringified snapped_points with self-healing coordinate backfill, and synthetically reconstructs missing traffic performance indices.
-AI Assistant (CUMTA Transit Intelligence Agent)
-Rendered via a floating viewport layer (render_ai_assistant_chat), the assistant provides real-time natural language query resolution and inline micro-analytics execution (_render_micro_chart). It utilizes a resilient 3-tier execution fallback architecture:
-Tier 1: Google Gemini (gemini-1.5-flash) via the google-genai SDK.
-Tier 2: Anthropic Claude (claude-sonnet-4-6) secondary REST fallback.
-Tier 3: Robust rule-based domain parser backed by an extensive knowledge base (_DOMAIN_KB) covering core metrics, hypotheses, and proxy transport topics.
-2. Comprehensive Tab-by-Tab Technical Specifications
-Dataset Overview & Audit Table (Tab 0)
-Core Policy & Business Question: Provides a real-time macroscopic review of data schemas, missing value null densities, and spatial footprint distribution across all monitored corridors.
-Data Pipeline & Feature Transformations: Consumes raw or pre-computed tabular exports. Computes network-wide observation counts, active corridor tallies, and data type profiles.
-Mathematical Formulas & Statistical Logic: Aggregates mean Travel Time Index ($\overline{TTI}_s$), peak-window averages, 95th percentiles ($P_{95}$), and cumulative Total Delay Hours:
-$$\overline{TTI}_s = \frac{1}{N_s}\sum_{i=1}^{N_s} TTI_{s,i} \quad\vert\quad \text{Total Delay Hours}_s = \frac{1}{3600}\sum_{i=1}^{N_s} \max(0,\; t_{\text{current},i} - t_{\text{free-flow},i})$$
-Visualizations & Chart Breakdown:
-Macro Spatial Congestion Map: Interactive Folium map rendering color-coded circle markers for heavy congestion ($TTI \ge 1.25$), moderate delay ($1.05 \le TTI < 1.25$), and free-flow ($TTI < 1.05$).
-Corridor-Wise Leaderboard: Tabular ranking sorted by mean TTI with gradient styling.
-Actionable CUMTA Policy Intervention: Identifies heavy bottleneck corridors for immediate first-wave capital review and schedules moderate segments for signal-timing optimization.
-Hypothesis 1: Systemic Bottleneck Localization (Tab 1)
-Core Policy & Business Question: Which specific segments are true root-cause bottlenecks that generate cascading spillover queues, versus victim segments that only slow down due to downstream back-pressure?
-Data Pipeline & Feature Transformations: Isolates segment-level sequences using sequence_order within each corridor_name. Computes segment-specific 90th-percentile TTI thresholds ($P_{90}$) to classify congestion states.
-Mathematical Formulas & Statistical Logic:
-Root-Cause Condition: A segment is a confirmed root cause if $TTI_t > P_{90}(TTI_s)$, its immediate upstream neighbor is clear, the breakdown persists into interval $t+1$, and repetition count $\ge 2$.
-Multi-Criteria Bottleneck Index (MCBI): Composite priority score combining tail severity, frequency, early onset, and causal event counts:
-$$\mathrm{MCBI}_s = 0.25 \tilde{P}_{90} + 0.20 \tilde{F}_{\text{cong}} + 0.25 (1 - \tilde{H}_{\text{onset}}) + 0.30 \tilde{E}_{\text{rc}}$$
-Visualizations & Chart Breakdown:
-MCBI Leaderboard: Stacked bar chart breaking down score components.
-Segment Congestion Heatmap: Hour-by-hour x segment grid displaying failure density.
-Top Segment Profiles: Weekday vs. weekend diurnal TTI comparison against threshold lines.
-Actionable CUMTA Policy Intervention: Deploy engineering crews exclusively to confirmed root-cause segments. Avoid civil CapEx on spillover/victim nodes, which self-resolve once upstream bottlenecks are cleared.
-Hypothesis 2: Temporal Peak Profiling (Tab 2)
-Core Policy & Business Question: At what precise minute does a road's capacity fail, how long does clearance take, and how does this diurnal cycle shift on weekends?
-Data Pipeline & Feature Transformations: Aggregates TTI by time_of_day and is_weekend. Calculates dynamic corridor-specific failure thresholds from the 90th percentile.
-Mathematical Formulas & Statistical Logic: Identifies peak failure minute via $\arg\max_t(\overline{TTI}_t)$ and measures clearance duration as elapsed minutes until failure rate drops $\le 25\%$. Wilcoxon signed-rank tests verify peak-vs-off-peak elevation.
-Visualizations & Chart Breakdown:
-Weekday vs. Weekend Failure Rate Bar Chart: Comparing operating failure percentages across corridors.
-Diurnal Velocity Degradation Line Plots: Side-by-side weekday and weekend profiles.
-Hourly Congestion Ratio Heatmaps: Hour vs. day-type failure proportion grid.
-Actionable CUMTA Policy Intervention: Retime traffic signals to target exact peak-hour onset windows confirmed by statistical tests.
-Hypothesis 3: Geometric Constraints & Structural Choke Points (Tab 3)
-Core Policy & Business Question: Are permanent infrastructure features (lane drops, bus stops, signal density) driving localized congestion, and how do we separate structural failures from transient demand spikes?
-Data Pipeline & Feature Transformations: Merges static geometry (road_width_lanes, nearest_signal_dist_meters, nearest_bus_stop_dist_meters) with telemetry. Engineers downstream lane drop delta ($\Delta\text{Lanes} = L_s - L_{s+1}$), signal density ($1000 / D_{\text{sig}}$), and bus friction ($1 / (D_{\text{bus}} \times L_s)$).
-Mathematical Formulas & Statistical Logic:
-2D Structural Dispersion Matrix: Classifies segments into Quadrant I (Persistent: off-peak TTI $\ge 1.5$ and peak TTI $\ge 2.2$), Quadrant II (Temporal: off-peak $< 1.5$ and peak $\ge 2.2$), and Quadrant III (Nominal).
-Mann-Whitney U Test: Tests whether lane-drop segments experience significantly higher TTI than uniform segments without assuming normality.
-Visualizations & Chart Breakdown:
-2D Dispersion Scatter Plot: Off-peak vs. peak TTI colored by quadrant.
-Partial Dependence Plots (PDP): Binned median trendlines for bus friction and signal density.
-Actionable_CUMTA Policy Intervention: Allocate capital civil works (lane widening, bus bay recessing) to Quadrant I segments; route Quadrant II segments to adaptive signal retiming.
-Hypothesis 4: Weather-Driven Variance (Tab 4)
-Core Policy & Business Question: How much does precipitation and reduced visibility degrade network capacity, and can we isolate weather sensitivity from rush-hour demand?
-Data Pipeline & Feature Transformations: Binds rainfall intensity ($\text{mm/hr}$) and atmospheric visibility ($\text{meters}$) to segment telemetry, categorizing weather states into dry baseline, light rain, moderate rain, and heavy monsoon anomaly.
-Mathematical Formulas & Statistical Logic: Computes micro-segment rain sensitivity slope via OLS regression of TTI on rainfall intensity. Multivariate OLS controls for hour-of-day cyclical harmonics ($\sin, \cos$) and segment fixed effects.
-Visualizations & Chart Breakdown:
-Rainfall vs. TTI Scatter + Fit Line: Displays link sensitivity slope.
-Visibility vs. TTI Elasticity Curves: Evaluates atmospheric sightline degradation.
-Actionable CUMTA Policy Intervention: Prioritize stormwater drainage upgrades and surface friction treatments (micro-surfacing) on high-beta-rain segments before monsoon season.
-Hypothesis 5: Tidal Flow Asymmetry (Tab 5)
-Core Policy & Business Question: Do morning and evening congestion patterns mirror each other, or does severe directional imbalance justify dynamic reversible lane management?
-Data Pipeline & Feature Transformations: Resolves opposing direction tracks (Direction A vs. Direction B) using name-token heuristics. Computes the hourly Tidal Split Coefficient ($\Lambda_{s,h}$).
-Mathematical Formulas & Statistical Logic:
-$$\Lambda_{s,h} = \frac{\text{Median}(TTI_{s,d,h})}{\text{Median}(TTI_{s,\bar{d},h})}$$
-Inversion Loop: $\Lambda \ge 1.8$ (AM peak) and $\Lambda \le 0.55$ (PM peak). Validated via Shapiro-Wilk normality testing on differences, Wilcoxon Signed-Rank tests, and Kolmogorov-Smirnov (KS) week-over-week distribution stability tests.
-Visualizations & Chart Breakdown:
-Lambda Hourly Profile: Divergence curves against 1.0, 1.8, and 0.55 threshold lines.
-Direction A vs. B Heatmaps: Side-by-side saturation grids.
-Actionable CUMTA Policy Intervention: Implement dynamic reversible lanes with automated bollards where no median barrier exists, or asymmetric green-time phasing where a fixed median barrier is present.
-Hypothesis 6: Commuter Uncertainty & Travel Time Predictability (Tab 6)
-Core Policy & Business Question: Which segments impose the greatest planning burden on commuters through unpredictable travel times?
-Data Pipeline & Feature Transformations: Applies an IQR outlier cleanser ($P_{75} + 1.5 \times IQR$) to filter out one-off crash spikes, isolating recurring peak-hour reliability.
-Mathematical Formulas & Statistical Logic:
-$$\mathrm{BTI}_s = \frac{P_{95}(TT_s) - \mu(TT_s)}{\mu(TT_s)} \times 100\% \quad\vert\quad \mathrm{PTI}_s = \frac{P_{95}(TT_s)}{FF_s}$$
-Heteroscedastic OLS: $\ln(\sigma^2) \sim \ln(\overline{\text{TTI}}) + D_{\text{signal}}$. Levene's test across weekly blocks ($W_1, W_2, W_3$) evaluates variance stability.
-Visualizations & Chart Breakdown:
-BTI Ranking Bar Chart: Top 15 least reliable segments.
-Heteroscedastic Variance Scatter Plot: Log-mean vs. log-variance elasticity fit.
-PDP Signal Proximity Curves & Levene Test Tables.
-Actionable CUMTA Policy Intervention: Deploy rapid incident response staging teams within 500 m of segments with BTI $\ge 80\%$ and transient Levene results.
-Hypothesis 7: The Flyover Exit & Gradients (Tab 7)
-Core Policy & Business Question: Does an elevated flyover mainline eliminate congestion, or does it relocate the bottleneck to the immediate downstream exit junction?
-Data Pipeline & Feature Transformations: Pairs each flyover segment with its immediate downstream neighbor using sequence_order within the corridor, merging synchronized timestamped telemetry.
-Mathematical Formulas & Statistical Logic: Computes the Displacement Rate—the proportion of intervals where the flyover is flowing freely ($TTI \le P_{90}$) while its immediate downstream exit is congested ($TTI > P_{90}$). Evaluated via cross-validated Random Forest classification.
-Visualizations & Chart Breakdown:
-Flyover vs. Exit Hourly TTI Curves: Comparative diurnal traces.
-Feature Importance Bar Charts: Quantifies predictive dependency of exit failure on flyover status.
-Actionable CUMTA Policy Intervention: Treat flyover-exit pairs as integrated systems; deploy ramp-metering or exit-lane widening at the downstream bottleneck rather than modifying the flyover mainline.
-Hypothesis 8: Spatial Length Dilution Bias (Tab 8)
-Core Policy & Business Question: Does analyzing long road stretches artificially hide severe localized traffic jams by averaging slow speeds with fast speeds?
-Data Pipeline & Feature Transformations: Dynamically groups consecutive micro-segments into macro-segments of configurable size (GROUP_SIZE) based on sequence_order.
-Mathematical Formulas & Statistical Logic: Computes travel-time-weighted macro-segment TTI and compares it against the worst constituent micro-segment's peak TTI to quantify the dilution gap and percentage underreporting.
-Visualizations & Chart Breakdown:
-Micro-vs-Macro Hourly Profiles: Constituent micro-segment lines plotted alongside combined macro-segment traces.
-Random Forest Regressor Importance Charts: Identifies drivers of aggregation loss.
-Actionable CUMTA Policy Intervention: Transition network monitoring strictly to micro-segment resolution in high-CV corridors to prevent macro-averaging from masking critical queue tails.
-Hypothesis 9: Unsupervised Taxonomy Clustering (Tab 9)
-Core Policy & Business Question: Which segments belong cleanly to a single policy archetype, and which ones straddle multiple archetypes, requiring blended multi-track interventions?
-Data Pipeline & Feature Transformations: Standardizes a 6D feature vector (AM TTI, PM TTI, Off-Peak TTI, BTI, CV, Lambda max) via z-scoring.
-Mathematical Formulas & Statistical Logic: Fits a 4-component Gaussian Mixture Model (GMM) using Expectation-Maximization to output soft membership probabilities ($W_s$) across archetypes. Flags high-risk hybrids when primary probability $< 0.85$ and secondary probability $\ge 0.30$. PCA compresses features into 2 axes ($PC_1$ severity, $PC_2$ unpredictability).
-Visualizations & Chart Breakdown:
-Multi-Axis PCA Policy Archetype Map: Interactive Plotly scatter with star markers for hybrids.
-Temporal Drift Slope Plot: Off-peak $\to$ AM $\to$ PM trajectory lines.
-Soft-Membership Heatmap & Parallel Coordinates Grid.
-Actionable CUMTA Policy Intervention: Assign blended CapEx packages (e.g., structural widening + adaptive signals) to star-marked hybrid segments rather than single-template fixes.
-Hypothesis 10: Traffic Volume via AQI Proxy (Tab 10)
-Core Policy & Business Question: Can localized Air Quality Index (AQI) telemetry serve as a proxy to distinguish high-volume vehicle idling gridlock from low-volume physical blockages?
-Data Pipeline & Feature Transformations: Aligns Google Environment API AQI readings with traffic telemetry. Applies Cross-Correlation Function (CCF) lags to establish temporal relationships.
-Mathematical Formulas & Statistical Logic: Multivariate OLS regression models AQI as a function of TTI, wind speed, precipitation, and hour-of-day controls. SHAP-style attribution separates traffic-induced emissions from external non-traffic pollution sources.
-Visualizations & Chart Breakdown:
-TTI vs. AQI Polynomial Fit Scatter Plot: Highlights the idling inflection threshold ($TTI = 1.8$).
-SHAP Attribution Bar Charts & Observed vs. Forecast Validation Panels.
-Actionable CUMTA Policy Intervention: Deploy transit capacity management (dedicated bus lanes) for high TTI + high AQI gridlock; dispatch incident response teams for high TTI + flat AQI physical blockages.
-3. Detailed Data Dictionary
-Variable Name
-Ingestion Source
-Data Type
-Formula / Origin Logic
-Diagnostic Function
-shapefile_segment_name
-Upstream Telemetry
-String
-Standardized uppercase UID (segment_uid)
-Primary spatial segment identifier
-travel_time_index_tti
-Gateway / Computed
-Float
-$\text{current\_travel\_time} / \text{free\_flow\_travel\_time}$
-Core relative congestion index
-execution_timestamp
-Gateway / Converted
-Datetime
-UTC timestamp converted to Asia/Kolkata IST
-Temporal anchoring for diurnal analysis
-derived_hour
-Gateway / Computed
-Integer
-Extracted from IST timestamp (execution_timestamp.dt.hour)
-Diurnal binning key
-is_weekend
-Gateway / Computed
-Integer
-1 if dayofweek $\ge 5$ else 0
-Day-type segmentation filter
-delta_lanes
-Spatial Reference
-Float
-$L_s - L_{s+1}$ (Downstream lane drop delta)
-Geometric bottleneck identification
-signal_density_proxy
-Spatial Reference
-Float
-$1000 / \max(D_{\text{signal}}, 1)$
-Intersection queue back-pressure proxy
-friction_bus
-Spatial Reference
-Float
-$1 / (D_{\text{bus}} \times L_s)$
-Intermodal transit friction index
-rainfall_intensity_mm_hr
-Weather API
-Float
-Ingested precipitation intensity (mm/h)
-Weather-driven capacity degradation driver
-visibility_meters
-Weather API
-Float
-Ingested atmospheric visibility scale
-Sightline and speed-following elasticity driver
-indexes_aqi
-Environment API
-Float
-Localized AQI or estimated via $45 + (TTI \times 24)$
-Vehicle idling and emissions proxy
-direction_track
-Gateway / Heuristic
-String
-Mapped to Direction A or Direction B
-Tidal flow asymmetry pairing key
-lambda_ratio
-Gateway / Computed
-Float
-$\text{Median}(TTI_A) / \text{Median}(TTI_B)$
-Directional tidal split coefficient
-bti_val
-Computed Module
-Float
-$(P_{95}(TT) - \mu(TT)) / \mu(TT) \times 100\%$
-Commuter planning buffer time index
-pti_val
-Computed Module
-Float
-$P_{95}(TT) / \text{FreeFlow}$
-Absolute planning time multiplier
-cv_val
-Computed Module
-Float
-$\sigma(TTI) / \mu(TTI)$
-Standardized dispersion and erraticism metric
-mcbi_score
-Computed Module
-Float
-Weighted composite of tail severity, frequency, onset, and RC count
-Multi-criteria engineering triage priority score
+# CUMTA Core Transit Network Diagnostics Cockpit
 
-4. Machine Learning & Statistical Cross-Check Suite
-The dashboard embeds five rigorous econometric and machine learning modules to cross-check empirical rule-based findings:
-H1 Breakdown Risk Prediction (NumPy Logistic Regression): Implements a custom gradient descent optimizer with sigmoid activation ($\sigma(z) = 1 / (1 + e^{-z})$) and standardized features (current TTI, congestion flags, upstream state, cyclical hour harmonics, and historical rates) to predict next-interval queue propagation probability.
-H2 Diurnal Failure-Probability Model (Harmonic Logistic Regression): Utilizes logistic regression with 1st and 2nd harmonic sine/cosine cyclical encodings (periods 24h and 12h) plus corridor interaction terms to capture multi-peak daily congestion shapes.
-H6 Heteroscedastic Uncertainty Expansion (Log-Variance OLS): Fits $\ln(\sigma^2) \sim \ln(\overline{\text{TTI}}) + D_{\text{signal}}$ via closed-form least squares to test whether journey-time variance expands non-linearly with congestion ($\hat\beta_1 > 0$), confirming structural unpredictability.
-H7 Sequential Displacement Classifier (Cross-Validated Random Forest): Trains a RandomForestClassifier on paired flyover-exit telemetry to predict downstream exit congestion from flyover status, proving whether flyovers relocate traffic jams.
-H9 Unsupervised Soft Taxonomy (Gaussian Mixture Model & PCA): Standardizes a 6D feature vector, fits a 4-component GMM for soft posterior probabilities ($W_{s,k}$), projects data into 2D via PCA, and evaluates stability via bootstrap Adjusted Rand Index (ARI $\ge 0.82$).
+**Technical Reference Manual & README**
+
+## Executive overview
+
+The **CUMTA Core Transit Network Diagnostics Cockpit** is a publication-grade spatial-temporal analytics framework designed for the Chennai Unified Metropolitan Transport Authority (CUMTA). It integrates high-frequency macroscopic traffic telemetry, environmental measurements, and static GIS infrastructure mappings to diagnose bottlenecks, identify structural choke points, quantify commuter uncertainty, and support data-driven capital expenditure (CapEx) planning.
+
+At a system level, the cockpit combines a rolling-horizon ingestion pipeline, schema-normalizing gateway logic, spatial-environmental joins, advanced diagnostic modules, and an embedded natural-language assistant. The result is a unified operational analytics environment for corridor surveillance, root-cause analysis, reliability measurement, and policy prioritization.
+
+***
+
+## System architecture
+
+### Ingestion architecture
+
+The repository is configured around a centralized raw-data pattern using the following repository constants:
+
+```python
+GITHUB_USER = "ArushiMarwaha"
+GITHUB_REPO = "Transit-Time-Analytics-Dashboard-"
+GITHUB_BRANCH = "main"
+```
+
+These constants define a dynamic `GITHUB_RAW_BASE_URL` that points directly to the `data_store/` directory in the GitHub repository.
+
+### Rolling-horizon retrieval engine
+
+The `fetch_rolling_horizon_dataset()` engine implements a rolling lookback strategy over the interval:
+
+$$
+[target\_date - lookback\_days + 1,\; target\_date]
+$$
+
+Key behaviors:
+
+- Uses robust HTTP CSV retrieval through `_http_get_csv()`.
+- Falls back automatically to local workspace mirrors in `data_store/` when remote retrieval fails.
+- Fetches static reference assets such as `segments_ref.csv` and `roads_results.csv` once at application boot.
+- Caches static assets using `st.cache_data` for performance.
+- Prevents many-to-many merge explosions by collapsing `roads_results.csv` to one unique row per segment through `_collapse_to_one_row_per_segment()`.
+
+### Environmental alignment layer
+
+The `_asof_join_environmental()` module binds approximately 3-hourly environmental observations from weather and AQI feeds onto cycle-level telemetry rows keyed by `segment_uid`.
+
+Core alignment rule:
+
+- `ENVIRONMENTAL_JOIN_TOLERANCE = pd.Timedelta("3.5 hours")`
+
+This tolerance prevents silent borrowing of environmental data across incompatible temporal windows or operational shifts.
+
+### Mid-layer gateway
+
+The `master_dashboard_data_gateway` acts as a schema-sniffing and normalization layer. Its major responsibilities include:
+
+- Standardizing inconsistent column names.
+- Converting UTC timestamps into Indian Standard Time (`Asia/Kolkata`).
+- Extracting latitude/longitude coordinates from nested JSON-like `snapped_points` payloads.
+- Applying self-healing geographic backfill when coordinates are partially missing.
+- Reconstructing traffic-performance indicators when upstream feeds are incomplete.
+
+### AI assistant layer
+
+The floating assistant rendered by `render_ai_assistant_chat` provides conversational diagnostics and inline micro-analytics via `_render_micro_chart`.
+
+It follows a resilient three-tier execution hierarchy:
+
+1. **Tier 1:** Google Gemini (`gemini-1.5-flash`) through the `google-genai` SDK.
+2. **Tier 2:** Anthropic Claude (`claude-sonnet-4-6`) through a REST fallback path.
+3. **Tier 3:** A rule-based transport-domain parser backed by `_DOMAIN_KB`.
+
+***
+
+## Data flow
+
+The end-to-end system workflow can be summarized as:
+
+1. Load static and rolling-horizon raw datasets.
+2. Normalize schemas and timestamps.
+3. Enrich segment telemetry with geometry and environmental context.
+4. Compute derived mobility, reliability, and policy features.
+5. Render diagnostic tabs, maps, tables, and model outputs.
+6. Expose analyst-facing natural-language interpretation through the embedded assistant.
+
+### Primary data domains
+
+| Domain | Typical contents | Operational role |
+|---|---|---|
+| Traffic telemetry | Travel times, free-flow travel time, segment observations, sequence order | Core congestion diagnostics |
+| Static GIS reference | Segment geometry, lane counts, signal proximity, bus-stop proximity | Structural bottleneck analysis |
+| Weather data | Rainfall intensity, visibility, atmospheric context | Weather sensitivity estimation |
+| AQI / environmental data | AQI and related environmental proxies | Traffic volume and idling proxy diagnostics |
+
+***
+
+## Diagnostic tabs
+
+### Tab 0: Dataset overview and audit table
+
+**Business question:** What is the current schema, completeness, and spatial footprint of the monitored network?
+
+**Key outputs:**
+
+- Network-wide observation counts.
+- Active corridor tallies.
+- Variable type profiles.
+- Missing-value auditing.
+- Spatial congestion map.
+
+**Core formulas:**
+
+$$
+\overline{TTI}_s = \frac{1}{N_s}\sum_{i=1}^{N_s} TTI_{s,i}
+$$
+
+$$
+\text{Total Delay Hours}_s = \frac{1}{3600}\sum_{i=1}^{N_s} \max(0,\; t_{\text{current},i} - t_{\text{free-flow},i})
+$$
+
+**Visuals:**
+
+- Macro spatial congestion map.
+- Corridor-wise leaderboard sorted by mean TTI.
+
+**Policy action:**
+
+- Immediate review of heavy bottleneck corridors.
+- Signal-timing optimization queue for moderate-delay corridors.
+
+### Tab 1: Hypothesis 1 — Systemic bottleneck localization
+
+**Business question:** Which segments are true root-cause bottlenecks, and which are merely spillover victims?
+
+**Transformation logic:**
+
+- Segment-level sequencing using `sequence_order` within each `corridor_name`.
+- Segment-specific congestion thresholds based on `P90(TTI)`.
+
+**Root-cause rule:**
+
+A segment is treated as a confirmed root cause when all of the following hold:
+
+- `TTI_t > P90(TTI_s)`.
+- The immediate upstream neighbor is uncongested.
+- Breakdown persists into interval `t + 1`.
+- Repetition count is at least 2.
+
+**Multi-Criteria Bottleneck Index (MCBI):**
+
+$$
+\mathrm{MCBI}_s = 0.25 \tilde{P}_{90} + 0.20 \tilde{F}_{\text{cong}} + 0.25 (1 - \tilde{H}_{\text{onset}}) + 0.30 \tilde{E}_{\text{rc}}
+$$
+
+**Visuals:**
+
+- MCBI leaderboard.
+- Segment congestion heatmap.
+- Top segment weekday-versus-weekend profiles.
+
+**Policy action:**
+
+Concentrate engineering interventions on root-cause segments and avoid premature CapEx on downstream victim nodes.
+
+### Tab 2: Hypothesis 2 — Temporal peak profiling
+
+**Business question:** When does capacity fail, how long does clearance take, and how do patterns shift on weekends?
+
+**Methods:**
+
+- Aggregate TTI by `time_of_day` and `is_weekend`.
+- Estimate dynamic corridor-specific failure thresholds from the 90th percentile.
+- Use Wilcoxon signed-rank tests for peak versus off-peak elevation.
+
+**Core logic:**
+
+- Peak failure minute is identified by `argmax_t(average TTI_t)`.
+- Clearance duration is measured until failure rate falls to 25 percent or less.
+
+**Visuals:**
+
+- Weekday versus weekend failure-rate bars.
+- Diurnal velocity degradation line plots.
+- Hour-by-day-type congestion heatmaps.
+
+**Policy action:**
+
+Target signal retiming at empirically verified peak-onset windows.
+
+### Tab 3: Hypothesis 3 — Geometric constraints and structural choke points
+
+**Business question:** Are permanent infrastructure constraints causing localized recurring congestion?
+
+**Feature engineering:**
+
+- `delta_lanes = L_s - L_{s+1}`
+- `signal_density_proxy = 1000 / D_sig`
+- `friction_bus = 1 / (D_bus × L_s)`
+
+**Analytical logic:**
+
+- Persistent and temporal structural classes defined in a 2D off-peak versus peak TTI dispersion space.
+- Mann-Whitney U test compares lane-drop segments with uniform segments.
+
+**Visuals:**
+
+- 2D structural dispersion scatter.
+- Partial dependence plots for bus friction and signal density.
+
+**Policy action:**
+
+- Quadrant I persistent segments: lane widening, bus bay recessing, structural redesign.
+- Quadrant II temporal segments: adaptive signal retiming.
+
+### Tab 4: Hypothesis 4 — Weather-driven variance
+
+**Business question:** How strongly do rainfall and visibility degrade network performance?
+
+**Methods:**
+
+- Attach rainfall intensity and visibility to telemetry.
+- Estimate micro-segment rain sensitivity by OLS regression of TTI on rainfall.
+- Use multivariate OLS with hour harmonics and segment fixed effects.
+
+**Visuals:**
+
+- Rainfall versus TTI scatter with fitted line.
+- Visibility versus TTI elasticity curves.
+
+**Policy action:**
+
+Prioritize drainage upgrades and surface-friction treatments on high weather-sensitivity corridors.
+
+### Tab 5: Hypothesis 5 — Tidal flow asymmetry
+
+**Business question:** Is directional imbalance strong enough to justify reversible-lane or asymmetric-phasing strategies?
+
+**Tidal Split Coefficient:**
+
+$$
+\Lambda_{s,h} = \frac{\text{Median}(TTI_{s,d,h})}{\text{Median}(TTI_{s,\bar{d},h})}
+$$
+
+**Inference suite:**
+
+- Shapiro-Wilk test on directional differences.
+- Wilcoxon signed-rank test.
+- Kolmogorov-Smirnov week-over-week stability check.
+
+**Decision rule:**
+
+- AM inversion pressure: `Λ >= 1.8`
+- PM inversion pressure: `Λ <= 0.55`
+
+**Visuals:**
+
+- Lambda hourly divergence profiles.
+- Direction A versus Direction B heatmaps.
+
+**Policy action:**
+
+Use reversible lanes where geometry allows, or asymmetric signal phasing where medians are fixed.
+
+### Tab 6: Hypothesis 6 — Commuter uncertainty and predictability
+
+**Business question:** Which segments impose the highest planning burden through unreliable travel times?
+
+**Preprocessing:**
+
+- Remove one-off spikes using the IQR upper fence `P75 + 1.5 × IQR`.
+
+**Metrics:**
+
+$$
+\mathrm{BTI}_s = \frac{P_{95}(TT_s) - \mu(TT_s)}{\mu(TT_s)} \times 100\%
+$$
+
+$$
+\mathrm{PTI}_s = \frac{P_{95}(TT_s)}{FF_s}
+$$
+
+**Variance model:**
+
+$$
+\ln(\sigma^2) \sim \ln(\overline{TTI}) + D_{\text{signal}}
+$$
+
+**Visuals:**
+
+- BTI ranking bars.
+- Log-mean versus log-variance scatter.
+- Signal-proximity PDPs and Levene test tables.
+
+**Policy action:**
+
+Stage rapid incident-response teams close to segments with very high BTI and unstable weekly variance.
+
+### Tab 7: Hypothesis 7 — Flyover exits and downstream gradients
+
+**Business question:** Do flyovers resolve congestion, or displace it to immediate downstream exits?
+
+**Pairing logic:**
+
+- Match each flyover segment to its next downstream segment using `sequence_order`.
+- Align synchronized telemetry by timestamp.
+
+**Key metric:**
+
+- **Displacement Rate:** share of intervals where the flyover is free-flowing while the downstream exit is congested.
+
+**Modeling:**
+
+- Cross-validated Random Forest classifier.
+
+**Visuals:**
+
+- Flyover versus exit hourly TTI profiles.
+- Feature-importance bars.
+
+**Policy action:**
+
+Treat flyovers and exits as integrated systems and intervene at the downstream discharge bottleneck.
+
+### Tab 8: Hypothesis 8 — Spatial length dilution bias
+
+**Business question:** Does aggregation across long road stretches hide severe local congestion?
+
+**Method:**
+
+- Group consecutive micro-segments into configurable macro-segments using `GROUP_SIZE`.
+- Compare weighted macro-segment TTI against the worst constituent micro-segment.
+
+**Outputs:**
+
+- Dilution gap.
+- Underreporting percentage.
+- Macro-versus-micro explainability drivers using Random Forest regression.
+
+**Visuals:**
+
+- Micro-versus-macro hourly profiles.
+- Feature-importance charts.
+
+**Policy action:**
+
+Maintain micro-segment monitoring in high-variability corridors to avoid masking short severe queues.
+
+### Tab 9: Hypothesis 9 — Unsupervised taxonomy clustering
+
+**Business question:** Which segments map cleanly to one policy archetype, and which require blended intervention packages?
+
+**Feature space:**
+
+A standardized six-dimensional vector:
+
+- AM TTI
+- PM TTI
+- Off-peak TTI
+- BTI
+- CV
+- Lambda max
+
+**Models:**
+
+- 4-component Gaussian Mixture Model via Expectation-Maximization.
+- PCA projection into two interpretable axes.
+- Bootstrap stability using Adjusted Rand Index.
+
+**Hybrid flagging rule:**
+
+- Primary membership probability `< 0.85`
+- Secondary membership probability `>= 0.30`
+
+**Visuals:**
+
+- PCA policy-archetype scatter.
+- Temporal drift slope plot.
+- Soft-membership heatmap.
+- Parallel-coordinates view.
+
+**Policy action:**
+
+Assign blended CapEx packages to hybrid segments rather than a single policy template.
+
+### Tab 10: Hypothesis 10 — Traffic volume via AQI proxy
+
+**Business question:** Can AQI distinguish high-volume idling gridlock from low-volume physical blockages?
+
+**Methods:**
+
+- Align AQI telemetry with traffic telemetry.
+- Use cross-correlation lags to identify temporal structure.
+- Model AQI using multivariate OLS with TTI, wind, precipitation, and hour controls.
+- Apply SHAP-style attribution logic to separate traffic-generated emissions from external pollution drivers.
+
+**Visuals:**
+
+- TTI versus AQI polynomial fit scatter.
+- SHAP attribution bars.
+- Observed-versus-forecast validation panels.
+
+**Policy action:**
+
+- High TTI + high AQI: capacity-management interventions such as bus-priority treatment.
+- High TTI + flat AQI: likely physical blockage requiring incident-response operations.
+
+***
+
+## Data dictionary
+
+| Variable name | Ingestion source | Data type | Formula / origin logic | Diagnostic function |
+|---|---|---|---|---|
+| `shapefile_segment_name` | Upstream telemetry | String | Standardized uppercase UID (`segment_uid`) | Primary spatial segment identifier |
+| `travel_time_index_tti` | Gateway / computed | Float | `current_travel_time / free_flow_travel_time` | Core congestion index |
+| `execution_timestamp` | Gateway / converted | Datetime | UTC to `Asia/Kolkata` conversion | Temporal anchor |
+| `derived_hour` | Gateway / computed | Integer | `execution_timestamp.dt.hour` | Diurnal binning |
+| `is_weekend` | Gateway / computed | Integer | `1 if dayofweek >= 5 else 0` | Day-type segmentation |
+| `delta_lanes` | Spatial reference | Float | `L_s - L_{s+1}` | Geometric bottleneck flag |
+| `signal_density_proxy` | Spatial reference | Float | `1000 / max(D_signal, 1)` | Queue back-pressure proxy |
+| `friction_bus` | Spatial reference | Float | `1 / (D_bus × L_s)` | Transit-friction proxy |
+| `rainfall_intensity_mm_hr` | Weather API | Float | Ingested precipitation intensity | Weather sensitivity driver |
+| `visibility_meters` | Weather API | Float | Ingested atmospheric visibility | Sightline elasticity driver |
+| `indexes_aqi` | Environment API | Float | AQI or estimated `45 + (TTI × 24)` | Idling and emissions proxy |
+| `direction_track` | Gateway / heuristic | String | Heuristic mapping to Direction A or B | Tidal pairing key |
+| `lambda_ratio` | Gateway / computed | Float | `Median(TTI_A) / Median(TTI_B)` | Directional asymmetry metric |
+| `bti_val` | Computed module | Float | `(P95(TT) - mean(TT)) / mean(TT) × 100%` | Commuter buffer index |
+| `pti_val` | Computed module | Float | `P95(TT) / FreeFlow` | Planning time multiplier |
+| `cv_val` | Computed module | Float | `sd(TTI) / mean(TTI)` | Relative variability |
+| `mcbi_score` | Computed module | Float | Weighted severity-frequency-onset-root-cause score | Engineering triage priority |
+
+***
+
+## Statistical and machine-learning cross-check suite
+
+The cockpit includes a formal cross-validation layer that tests whether rule-based diagnostics are supported by predictive or unsupervised models.
+
+### H1 breakdown risk prediction
+
+A custom NumPy logistic-regression implementation estimates next-interval queue-propagation probability using:
+
+- Current TTI.
+- Congestion-state flags.
+- Upstream condition.
+- Cyclical hour harmonics.
+- Historical failure-rate features.
+
+Sigmoid link:
+
+$$
+\sigma(z) = \frac{1}{1 + e^{-z}}
+$$
+
+### H2 diurnal failure-probability model
+
+A harmonic logistic-regression framework models multi-peak daily congestion shapes using first- and second-order cyclical sine/cosine terms with corridor interactions.
+
+### H6 heteroscedastic uncertainty expansion
+
+Closed-form OLS estimates whether travel-time variance expands non-linearly with congestion:
+
+$$
+\ln(\sigma^2) \sim \ln(\overline{TTI}) + D_{\text{signal}}
+$$
+
+A positive fitted congestion elasticity supports structural unpredictability rather than random noise.
+
+### H7 sequential displacement classifier
+
+A cross-validated RandomForestClassifier predicts downstream exit congestion using paired flyover-exit telemetry, testing whether elevated infrastructure displaces rather than eliminates bottlenecks.
+
+### H9 unsupervised soft taxonomy
+
+The clustering subsystem standardizes a six-dimensional feature vector, fits a four-component Gaussian Mixture Model, projects onto PCA axes, and assesses clustering stability with bootstrap Adjusted Rand Index, targeting stability around `ARI >= 0.82`.
+
+***
+
+## Interpretation guidance
+
+### Reading the diagnostic system
+
+The cockpit is designed to distinguish among five broad policy narratives:
+
+- **Root-cause operational bottlenecks** that require engineering attention.
+- **Spillover victims** that improve once upstream failures are addressed.
+- **Structural choke points** caused by geometry and fixed infrastructure.
+- **Environmental degradation regimes** that amplify congestion under rain or poor visibility.
+- **Uncertainty-heavy commuter corridors** that require reliability-focused interventions.
+
+### Policy logic by diagnostic class
+
+| Diagnostic class | Typical signal | Preferred intervention |
+|---|---|---|
+| Root-cause bottleneck | High MCBI, repeated causal onset | Civil engineering or junction redesign |
+| Temporal overload | Peak-only failure, low off-peak burden | Adaptive signal retiming |
+| Structural choke point | High peak and high off-peak TTI | Lane widening, bus bay redesign, geometric fixes |
+| Weather-sensitive corridor | High rainfall or visibility beta | Drainage, surfacing, monsoon hardening |
+| High uncertainty corridor | High BTI / PTI / unstable variance | Incident-response staging and traveler information |
+| Directionally asymmetric corridor | Extreme Lambda inversion | Reversible lanes or directional phasing |
+
+***
+
+## Repository organization
+
+A recommended repository skeleton for maintainability is shown below.
+
+```text
+Transit-Time-Analytics-Dashboard-/
+├── app.py
+├── dashboard/
+│   ├── tabs/
+│   ├── models/
+│   ├── visuals/
+│   └── ai/
+├── data_store/
+│   ├── routes_results_*.csv
+│   ├── weather_results_*.csv
+│   ├── aqi_results_*.csv
+│   ├── roads_results.csv
+│   └── segments_ref.csv
+├── utils/
+│   ├── ingestion.py
+│   ├── gateway.py
+│   ├── joins.py
+│   └── metrics.py
+└── README.md
+```
+
+***
+
+## Operational assumptions and safeguards
+
+- Segment identifiers must remain stable across traffic, GIS, weather, and AQI feeds.
+- Environmental joins should never exceed the configured tolerance window.
+- Static reference assets should be de-duplicated to one row per segment before merging.
+- Timezone conversion to IST must occur before any diurnal or weekend segmentation.
+- Micro-segment resolution should be preserved whenever aggregation could hide queue tails.
+- Cross-check models are intended to validate, not replace, domain rule logic.
+
+***
+
+## Recommended extensions
+
+To strengthen future versions of the cockpit, the following enhancements are recommended:
+
+- Bayesian hierarchical reliability modeling for corridor-level shrinkage.
+- Bootstrap confidence intervals for MCBI and BTI rankings.
+- Spatial autocorrelation diagnostics for adjacent segment spillovers.
+- Causal intervention tracking for before-after signal and CapEx evaluation.
+- Automated report export pipelines for policy briefing notes.
+- Drift monitoring for schema evolution and upstream API changes.
+
+***
+
+## Quick start
+
+### Prerequisites
+
+- Python environment with Streamlit, pandas, NumPy, scikit-learn, and plotting libraries.
+- Access to the configured GitHub raw-data repository or synchronized local mirror.
+- Valid API credentials where external AI or environmental services are used.
+
+### Boot sequence
+
+1. Load static references and initialize cache.
+2. Resolve rolling-horizon traffic and environmental datasets.
+3. Pass raw inputs through `master_dashboard_data_gateway`.
+4. Materialize feature layers and hypothesis tables.
+5. Render dashboard tabs and activate assistant services.
+
+### Minimum validation checks
+
+- Static tables de-duplicate correctly.
+- Timestamps localize to IST without null inflation.
+- Segment geocoding backfill succeeds on malformed `snapped_points` rows.
+- Environmental joins stay within 3.5-hour tolerance.
+- Hypothesis tabs gracefully degrade when one supporting feed is missing.
+
+***
+
