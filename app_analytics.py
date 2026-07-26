@@ -2777,54 +2777,72 @@ def main():
         # 7. SEGMENT-WISE CONGESTION HEATMAP (single combined view, all corridors)
         # ==============================================================================
         st.write("---")
-        section_title("Segment-Wise Congestion Heatmap - All Corridors")
+        section_title("Segment-Wise Congestion Heatmap - Per Corridor")
         st.markdown(
-            '<div class="h1-section-sub">One combined heatmap. X-axis = every monitored segment across all 5 '
-            'corridors (Central-Puzhal and Puzhal-Central kept as two separate one-way corridors, never merged). '
-            'Y-axis = hour of day. Cell color = congestion strength (fraction of that hour spent congested for '
-            'that segment). Segment labels on the x-axis are color-coded by status: red = confirmed root cause, '
-            'yellow = likely spillover, green = no structural issue.</div>',
+            '<div class="h1-section-sub">One heatmap per corridor (Central-Puzhal and Puzhal-Central kept as two '
+            'separate one-way corridors, never merged), each sized to its own segment count so labels stay '
+            'readable. X-axis = every monitored segment in that corridor. Y-axis = hour of day. Cell color = '
+            'congestion strength (fraction of that hour spent congested for that segment). Segment labels are '
+            'color-coded by status: red = confirmed root cause, yellow = likely spillover, blue = untestable, '
+            'green = no structural issue.</div>',
             unsafe_allow_html=True
         )
  
-        seg_order_all = metrics.sort_values(['corridor_name', 'mean_sequence_order'])['segment_uid'].tolist()
         seg_label_map = metrics.set_index('segment_uid')['segment_id'].to_dict()
         seg_class_map = metrics.set_index('segment_uid')['classification'].to_dict()
- 
-        heat_pivot = df_analyzed.pivot_table(
-            index='hour_of_day', columns='segment_uid', values='is_congested', aggfunc='mean'
-        )
-        heat_pivot = heat_pivot.reindex(columns=seg_order_all)
-        heat_pivot = heat_pivot.reindex(range(24))
-        heat_pivot.columns = [seg_label_map.get(s, s) for s in seg_order_all]
- 
-        fig_seg_heat, ax_seg_heat = plt.subplots(figsize=(min(max(10, 1.8 * len(seg_order_all)), 40.0), 8))
-        sns.heatmap(
-            heat_pivot, cmap='YlOrRd', vmin=0, vmax=1, ax=ax_seg_heat,
-            cbar_kws={'label': 'Congestion strength (fraction of hour congested)'},
-            linewidths=0.4, linecolor='white'
-        )
- 
-        for tick_label, seg_uid in zip(ax_seg_heat.get_xticklabels(), seg_order_all):
-            status = seg_class_map.get(seg_uid, "No structural issue detected")
-            tick_label.set_color(STATUS_COLORS[status])
-            tick_label.set_fontweight('bold')
- 
-        ax_seg_heat.set_title(
-            "Congestion Strength by Segment and Hour ("
-            + str(len(seg_order_all)) + " segments across "
-            + str(metrics['corridor_name'].nunique()) + " corridors)",
-            fontsize=12, fontweight='bold', color='#1a1a2e', pad=12
-        )
-        ax_seg_heat.set_xlabel("Segment", fontsize=10, fontweight='bold', color='#1a1a2e')
-        ax_seg_heat.set_ylabel("Hour of day", fontsize=10, fontweight='bold', color='#1a1a2e')
-        plt.xticks(rotation=30, ha='right', fontsize=8.5)
-        plt.yticks(fontsize=8.5)
-        plt.tight_layout(pad=1.2)
-        st.pyplot(fig_seg_heat)
-        plt.close(fig_seg_heat)
+        total_segs = metrics['segment_uid'].nunique()
+        total_corr = metrics['corridor_name'].nunique()
+        st.caption(f"{total_segs} segments across {total_corr} corridors, shown below one corridor at a time.")
+
+        # Corridors in a stable, deterministic order (alphabetical) — each one gets exactly one
+        # heatmap. Within each corridor, segments are ordered strictly by sequence_order (physical
+        # position along the corridor), not by name/UID, so the x-axis reads start-to-end just like
+        # driving the corridor.
+        heat_corridors = sorted(metrics['corridor_name'].dropna().unique().tolist())
+        if len(heat_corridors) != total_corr:
+            st.warning(f"Expected {total_corr} corridors but found {len(heat_corridors)} distinct names — check for blank/NaN corridor_name values.")
+
+        for corr in heat_corridors:
+            corr_seg_order = metrics.loc[metrics['corridor_name'] == corr] \
+                .sort_values('mean_sequence_order', kind='mergesort')['segment_uid'].tolist()
+            if not corr_seg_order:
+                continue
+
+            corr_pivot = df_analyzed[df_analyzed['segment_uid'].isin(corr_seg_order)].pivot_table(
+                index='hour_of_day', columns='segment_uid', values='is_congested', aggfunc='mean'
+            )
+            corr_pivot = corr_pivot.reindex(columns=corr_seg_order)
+            corr_pivot = corr_pivot.reindex(range(24))
+            corr_pivot.columns = [seg_label_map.get(s, s) for s in corr_seg_order]
+
+            n_segs = len(corr_seg_order)
+            fig_w = max(6.0, min(0.42 * n_segs, 26.0))
+            fig_seg_heat, ax_seg_heat = plt.subplots(figsize=(fig_w, 5.5))
+            sns.heatmap(
+                corr_pivot, cmap='YlOrRd', vmin=0, vmax=1, ax=ax_seg_heat,
+                cbar_kws={'label': 'Congestion strength'},
+                linewidths=0.4, linecolor='white'
+            )
+
+            for tick_label, seg_uid in zip(ax_seg_heat.get_xticklabels(), corr_seg_order):
+                status = seg_class_map.get(seg_uid, "No structural issue detected")
+                tick_label.set_color(STATUS_COLORS[status])
+                tick_label.set_fontweight('bold')
+
+            ax_seg_heat.set_title(
+                f"{corr}  ({n_segs} segments)",
+                fontsize=12, fontweight='bold', color='#1a1a2e', pad=10
+            )
+            ax_seg_heat.set_xlabel("Segment", fontsize=10, fontweight='bold', color='#1a1a2e')
+            ax_seg_heat.set_ylabel("Hour of day", fontsize=10, fontweight='bold', color='#1a1a2e')
+            plt.setp(ax_seg_heat.get_xticklabels(), rotation=45, ha='right', fontsize=9)
+            plt.setp(ax_seg_heat.get_yticklabels(), fontsize=8.5)
+            plt.tight_layout(pad=1.0)
+            st.pyplot(fig_seg_heat)
+            plt.close(fig_seg_heat)
+
         st.caption(
-            "Central-Puzhal and Puzhal-Central are shown as two independent columns here - they are opposite "
+            "Central-Puzhal and Puzhal-Central are shown as two independent corridors here - they are opposite "
             "one-way directions, not one corridor, and are never averaged together."
         )
  
