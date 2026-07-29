@@ -5083,13 +5083,17 @@ def main():
             m_h6 = folium.Map(location=[clat_h6, clon_h6],
                               zoom_start=11 if selected_corridor_h6 == "All Corridors" else 13,
                               tiles="CartoDB positron")
+            
+            # --- FIXED LEGEND HTML: Explicit black text and background overrides ---
             legend_html_h6 = f"""
             <div style="position:fixed;bottom:30px;left:30px;z-index:9999;background:white;
-                        padding:12px 16px;border-radius:8px;border:1px solid #CBD5E1;font-size:12px;font-family:sans-serif;">
-              <b style="color:#1E293B;">BTI Risk Level</b><br>
-              <span style="color:#991B1B;">&#9632;</span> BTI ≥ {bti_alert_threshold}% — Acute Alert<br>
-              <span style="color:#D97706;">&#9632;</span> BTI {int(bti_alert_threshold*0.6)}–{bti_alert_threshold}% — Monitored<br>
-              <span style="color:#166534;">&#9632;</span> BTI < {int(bti_alert_threshold*0.6)}% — Stable
+                        padding:12px 16px;border-radius:8px;border:1px solid #CBD5E1;font-size:12px;
+                        font-family:sans-serif;color:#000000 !important;box-shadow:0 2px 6px rgba(0,0,0,0.2);">
+              <b style="color:#000000 !important;font-size:13px;">BTI Risk Level</b><br>
+              <hr style="margin:4px 0 8px 0;border:0;border-top:1px solid #E2E8F0;">
+              <span style="color:#991B1B;font-size:14px;">&#9632;</span> <span style="color:#000000 !important;font-weight:600;">BTI &ge; {bti_alert_threshold}% — Acute Alert</span><br>
+              <span style="color:#D97706;font-size:14px;">&#9632;</span> <span style="color:#000000 !important;font-weight:600;">BTI {int(bti_alert_threshold*0.6)}–{bti_alert_threshold}% — Monitored</span><br>
+              <span style="color:#166534;font-size:14px;">&#9632;</span> <span style="color:#000000 !important;font-weight:600;">BTI &lt; {int(bti_alert_threshold*0.6)}% — Stable</span>
             </div>"""
             m_h6.get_root().html.add_child(folium.Element(legend_html_h6))
 
@@ -5102,19 +5106,20 @@ def main():
                 else:
                     clr_h6 = "#166534"; rad_h6 = 4; tier_h6 = "STABLE — Routine monitoring"
 
+                # --- FIXED TOOLTIP HTML: High-contrast text colors ---
                 tip_h6 = (
-                    f"<div style='font-family:sans-serif;font-size:12px;min-width:220px'>"
-                    f"<b style='color:#1E293B'>{r['shapefile_segment_name']}</b><br>"
-                    f"<span style='color:#475569'>{r['corridor_name']}</span><hr style='margin:3px 0'>"
-                    f"<b>BTI:</b> {r['bti_val']:.1f}% &nbsp; <b>PTI:</b> {r['pti_val']:.3f}<br>"
-                    f"<b>Mean TT:</b> {r['mean_tt']:.0f}s &nbsp; <b>P95 TT:</b> {r['p95_tt']:.0f}s<br>"
-                    f"<b>CV (σ/μ):</b> {r['cv']:.3f}<br>"
-                    f"<b>Nearest Signal:</b> {r['sig_dist']:.0f} m<br><hr style='margin:3px 0'>"
-                    f"<b style='color:{clr_h6}'>Risk:</b> {tier_h6}</div>"
+                    f"<div style='font-family:sans-serif;font-size:12px;min-width:220px;color:#000000 !important;background:white !important;padding:4px;'>"
+                    f"<b style='color:#000000 !important'>{r['shapefile_segment_name']}</b><br>"
+                    f"<span style='color:#334155 !important'>{r['corridor_name']}</span><hr style='margin:3px 0;border-top:1px solid #CBD5E1'>"
+                    f"<span style='color:#000000 !important'><b>BTI:</b> {r['bti_val']:.1f}% &nbsp; <b>PTI:</b> {r['pti_val']:.3f}</span><br>"
+                    f"<span style='color:#000000 !important'><b>Mean TT:</b> {r['mean_tt']:.0f}s &nbsp; <b>P95 TT:</b> {r['p95_tt']:.0f}s</span><br>"
+                    f"<span style='color:#000000 !important'><b>CV (&sigma;/&mu;):</b> {r['cv']:.3f}</span><br>"
+                    f"<span style='color:#000000 !important'><b>Nearest Signal:</b> {r['sig_dist']:.0f} m</span><br><hr style='margin:3px 0;border-top:1px solid #CBD5E1'>"
+                    f"<b style='color:{clr_h6} !important'>Risk:</b> <span style='color:#000000 !important'>{tier_h6}</span></div>"
                 )
                 folium.CircleMarker(
                     location=[r["lat"], r["lon"]], radius=rad_h6,
-                    color=clr_h6, fill=True, fill_opacity=0.88,
+                    color=clr_h6, fill=True, fill_color=clr_h6, fill_opacity=0.88,
                     tooltip=folium.Tooltip(tip_h6, sticky=True)
                 ).add_to(m_h6)
 
