@@ -51,7 +51,7 @@ def master_dashboard_data_gateway(df: pd.DataFrame) -> pd.DataFrame:
     # CASE A: RAW UPSTREAM API TELEMETRY DATA (e.g., roads_results.csv)
     # ----------------------------------------------------------------──────────
     if 'timestamp_utc' in df.columns or 'snapped_points' in df.columns or 'travel_time_seconds' in df.columns:
-        st.info("🔄 Raw Automation Pipeline Structure Identified. Executing data schema translation...")
+        st.info("Raw Automation Pipeline Structure Identified. Executing data schema translation...")
         
         # 1. Standardize Timestamps, Localize UTC → IST, then Create Core Temporal Classes
         time_col = 'timestamp_utc' if 'timestamp_utc' in df.columns else 'execution_timestamp'
@@ -145,13 +145,13 @@ def master_dashboard_data_gateway(df: pd.DataFrame) -> pd.DataFrame:
         if 'sequence_order' not in df.columns:
             df['sequence_order'] = df.groupby('corridor_name').cumcount() + 1
 
-        st.success("✅ Automation pipeline data mapped. All structural analysis channels are active.")
+        st.success("Automation pipeline data mapped. All structural analysis channels are active.")
 
     # --------------------------------──────────────────────────────────────────
     # CASE B: PRE-COMPUTED PIPELINE OUTPUTS (e.g., asset_reliability_ledger.csv)
     # ----------------------------------------------------------------──────────
     else:
-        st.success("✅ Downstream calculated ledger file detected. Passing straight to visualization templates.")
+        st.success("Downstream calculated ledger file detected. Passing straight to visualization templates.")
         # Standardize column headers back to baseline variables used by the tabs
         if 'segment_id' in df.columns and 'segment_uid' not in df.columns:
             df['segment_uid'] = df['segment_id']
@@ -402,7 +402,7 @@ def _left_merge_static_asset(combined_df: pd.DataFrame, static_df: Optional[pd.D
     the compiled rolling-horizon frame on segment_uid, only bringing in columns
     that aren't already present (so dynamic-table columns always win)."""
     if static_df is None:
-        st.sidebar.caption(f"⚠️ Static {asset_label} unavailable -- related columns will use gateway fallbacks.")
+        st.sidebar.caption(f"Static {asset_label} unavailable -- related columns will use gateway fallbacks.")
         return combined_df
     if 'segment_uid' not in static_df.columns or 'segment_uid' not in combined_df.columns:
         return combined_df
@@ -410,7 +410,7 @@ def _left_merge_static_asset(combined_df: pd.DataFrame, static_df: Optional[pd.D
     return combined_df.merge(static_df[static_cols], on='segment_uid', how='left')
 
 
-@st.cache_data(ttl=3600, max_entries=5, show_spinner="📡 Pulling & stitching historical telemetry tables from GitHub data_store")
+@st.cache_data(ttl=3600, max_entries=5, show_spinner=" Pulling & stitching historical telemetry tables from GitHub data_store")
 def fetch_rolling_horizon_dataset(target_date: date, lookback_days: int) -> pd.DataFrame:
     """
     Rolling-horizon downloader/compiler.
@@ -448,7 +448,7 @@ def fetch_rolling_horizon_dataset(target_date: date, lookback_days: int) -> pd.D
 
     if missing_dates:
         st.sidebar.caption(
-            f"⚠️ {len(missing_dates)} of {len(date_range)} day-log(s) unavailable "
+            f"{len(missing_dates)} of {len(date_range)} day-log(s) unavailable "
             f"(pipeline gaps/timeouts) and were skipped cleanly."
         )
 
@@ -468,19 +468,29 @@ def fetch_rolling_horizon_dataset(target_date: date, lookback_days: int) -> pd.D
 # 1. Page Configuration & Professional Engineering Styling Enforcements
 st.set_page_config(
     page_title="CUMTA Corridor Diagnostics Suite",
-    page_icon="📊",
-    layout="wide",
+    page_layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # Custom injection for scannable UI visual formatting rules
 st.markdown("""
     <style>
+    :root {
+        /* Prefer Streamlit's own active-theme variable first -- this tracks
+           whichever theme (Light/Dark) the viewer actually has selected in
+           the app, not just their OS-level color-scheme preference. The
+           prefers-color-scheme fallback only kicks in on Streamlit builds
+           that don't expose --text-color. */
+        --h1-text: var(--text-color, #0F172A);
+    }
+    @media (prefers-color-scheme: dark) {
+        :root { --h1-text: var(--text-color, #F8FAFC); }
+    }
     .main .block-container { padding-top: 2rem; }
     div.stButton > button:first-child {
         background-color: #1f77b4; color: white; border-radius: 6px; font-weight: bold;
     }
-    /* Make all headings white and bold for dark theme visibility */
+    /* Headings/text follow the active Streamlit theme (solid, high-contrast in both) */
     .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4, 
     .stMarkdown h5, .stMarkdown h6,
     .st-emotion-cache-1v0mbdj h1, .st-emotion-cache-1v0mbdj h2, .st-emotion-cache-1v0mbdj h3,
@@ -489,16 +499,16 @@ st.markdown("""
     div[data-testid="stMarkdown"] h1, div[data-testid="stMarkdown"] h2, 
     div[data-testid="stMarkdown"] h3, div[data-testid="stMarkdown"] h4,
     h1, h2, h3, h4, h5, h6 {
-        color: #ffffff !important;
+        color: var(--h1-text) !important;
         font-weight: 700 !important;
         opacity: 1 !important;
     }
     .st-emotion-cache-1v0mbdj {
-        color: #ffffff !important;
+        color: var(--h1-text) !important;
     }
-    /* Ensure all text in markdown is white */
+    /* Ensure all text in markdown stays high-contrast in both themes */
     .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown div {
-        color: #ffffff !important;
+        color: var(--h1-text) !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -522,39 +532,70 @@ STATUS_STYLE = {
 
 
 def inject_professional_style():
-    """Shared card / callout / heading CSS for the five 'engineering-grade' tabs."""
+    """Shared card / callout / heading CSS for the five 'engineering-grade' tabs.
+
+    Uses solid, high-contrast surface colors for both Streamlit themes instead
+    of a single hardcoded dark palette, so cards/callouts/headings stay legible
+    whether the viewer has Light or Dark mode active:
+      - Light mode surface #FFFFFF, text #0F172A
+      - Dark mode surface  #1E293B, text #F8FAFC
+    """
     st.markdown("""
         <style>
+        :root {
+            /* Streamlit's own theme vars (--background-color,
+               --secondary-background-color, --text-color) reflect the
+               viewer's actually-active theme -- in-app toggle included, not
+               just the OS preference -- so bind to those first and fall
+               back to the light-mode hex values on older Streamlit builds
+               that don't expose them. */
+            --h1-surface: var(--secondary-background-color, #FFFFFF);
+            --h1-surface-alt: var(--background-color, #F8FAFC);
+            --h1-text: var(--text-color, #0F172A);
+            --h1-text-muted: #475569;
+            --h1-border: #CBD5E1;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --h1-surface: var(--secondary-background-color, #1E293B);
+                --h1-surface-alt: var(--background-color, #16202F);
+                --h1-text: var(--text-color, #F8FAFC);
+                --h1-text-muted: #CBD5E1;
+                --h1-border: #334155;
+            }
+        }
         .h1-kpi-card {
-            background: linear-gradient(145deg, #1a1a2e, #2d2d44);
-            border: 1px solid #3d3d5c;
+            background: var(--h1-surface);
+            border: 1px solid var(--h1-border);
             border-radius: 12px;
             padding: 18px 20px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.12);
             height: 100%;
         }
         .h1-kpi-label {
             font-size: 12.5px; font-weight: 600; letter-spacing: 0.03em;
-            text-transform: uppercase; color: #a0aec0; margin-bottom: 6px;
+            text-transform: uppercase; color: var(--h1-text-muted); margin-bottom: 6px;
         }
-        .h1-kpi-value { font-size: 26px; font-weight: 700; color: #ffffff; line-height: 1.15; }
-        .h1-kpi-sub { font-size: 12.5px; color: #a0aec0; margin-top: 4px; }
+        .h1-kpi-value { font-size: 26px; font-weight: 700; color: var(--h1-text); line-height: 1.15; }
+        .h1-kpi-sub { font-size: 12.5px; color: var(--h1-text-muted); margin-top: 4px; }
         .h1-section-title {
-            font-size: 22px !important; font-weight: 700 !important; color: #ffffff !important;
+            font-size: 22px !important; font-weight: 700 !important; color: var(--h1-text) !important;
             margin-top: 8px !important; margin-bottom: 4px !important; opacity: 1 !important;
         }
-        .h1-section-sub { font-size: 14px; color: #a0aec0; margin-bottom: 12px; }
+        .h1-section-sub { font-size: 14px; color: var(--h1-text-muted); margin-bottom: 12px; }
         .h1-callout {
-            background-color: #2d2d44; border-left: 4px solid #3498db; padding: 14px 18px;
-            border-radius: 6px; font-size: 14.5px; color: #ffffff; margin-bottom: 14px;
+            background-color: var(--h1-surface-alt); border-left: 4px solid #3498db; padding: 14px 18px;
+            border-radius: 6px; font-size: 14.5px; color: var(--h1-text); margin-bottom: 14px;
+            border-top: 1px solid var(--h1-border); border-right: 1px solid var(--h1-border);
+            border-bottom: 1px solid var(--h1-border);
         }
-        .h1-callout b, .h1-callout strong { color: #ffffff !important; }
+        .h1-callout b, .h1-callout strong { color: var(--h1-text) !important; }
         .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4,
         div[data-testid="stMarkdown"] h1, div[data-testid="stMarkdown"] h2,
         div[data-testid="stMarkdown"] h3, div[data-testid="stMarkdown"] h4 {
-            color: #ffffff !important; font-weight: 700 !important; opacity: 1 !important;
+            color: var(--h1-text) !important; font-weight: 700 !important; opacity: 1 !important;
         }
-        .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown div { color: #ffffff !important; }
+        .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown div { color: var(--h1-text) !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -588,6 +629,33 @@ def apply_pro_plot_style():
     })
 
 
+def apply_pro_plotly_style(fig):
+    """Plotly counterpart to apply_pro_plot_style(). Forces an explicit, solid
+    white canvas with high-contrast text/gridlines directly on the figure so
+    it renders identically under Streamlit's Light and Dark themes -- rather
+    than inheriting a transparent paper/plot background that goes unreadable
+    (or disappears entirely) when the surrounding theme flips."""
+    axis_style = dict(
+        color="#0F172A",
+        gridcolor="#E2E8F0",
+        linecolor="#CBD5E1",
+        zerolinecolor="#E2E8F0",
+        tickfont=dict(color="#334155"),
+        title_font=dict(color="#0F172A"),
+    )
+    fig.update_layout(
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        font=dict(color="#0F172A"),
+        title_font=dict(color="#0F172A"),
+        legend=dict(font=dict(color="#0F172A"), bgcolor="#FFFFFF", bordercolor="#CBD5E1", borderwidth=1),
+        xaxis=axis_style,
+        yaxis=axis_style,
+        coloraxis_colorbar=dict(tickfont=dict(color="#0F172A"), title_font=dict(color="#0F172A")),
+    )
+    return fig
+
+
 def style_axes(ax):
     """Strip chart junk so every figure reads as a clean, professional exhibit,
     with explicit high-contrast colors applied directly to this axes object so
@@ -605,9 +673,9 @@ def style_axes(ax):
 
 def render_page_header(title_html, subtitle_text):
     st.markdown(
-        f'<h1 style="font-size:28px; font-weight:800; color:#ffffff; margin-bottom:2px; opacity:1 !important;">'
+        f'<h1 style="font-size:28px; font-weight:800; color:var(--h1-text, #0F172A); margin-bottom:2px; opacity:1 !important;">'
         f'{title_html}</h1>'
-        f'<div style="font-size:15px; color:#a0aec0; margin-bottom:14px;">{subtitle_text}</div>',
+        f'<div style="font-size:15px; color:var(--h1-text-muted, #475569); margin-bottom:14px;">{subtitle_text}</div>',
         unsafe_allow_html=True
     )
 
@@ -804,7 +872,7 @@ def render_ai_assistant_chat(df: pd.DataFrame) -> None:
 
     st.markdown('<div id="cumta-ai-anchor"></div>', unsafe_allow_html=True)
 
-    with st.expander(" CUMTA Transit Intelligence Agent  |  Search & Ask", expanded=False):
+    with st.expander("CUMTA Transit Intelligence Agent  |  Search & Ask", expanded=False):
 
         # ── Scrollable Chat Feed ─────────────────────────────────────────────
         st.markdown('<div class="cumta-chat-scroll-window">', unsafe_allow_html=True)
@@ -863,7 +931,7 @@ def render_ai_assistant_chat(df: pd.DataFrame) -> None:
                 st.session_state.cumta_chat_history.append({"role": "ai", "content": txt, "chart_cmd": cmd})
                 st.rerun()
         with q2:
-            if st.button(" BTI Risk", key="q_bti", width="stretch"):
+            if st.button("BTI Risk", key="q_bti", width="stretch"):
                 st.session_state.cumta_chat_history.append({"role": "user", "content": "show BTI risk"})
                 txt, cmd = _build_ai_response("show BTI risk", df)
                 st.session_state.cumta_chat_history.append({"role": "ai", "content": txt, "chart_cmd": cmd})
@@ -1503,7 +1571,6 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
                 st.toast(
                     "Gemini API Error: received None response object. "
                     "Check your API key quota and network connectivity.",
-                    icon="⚠️",
                 )
                 st.sidebar.error(
                     "**[Gemini Tier]** Response object was None. "
@@ -1517,12 +1584,10 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
                 else:
                     st.toast(
                         "Gemini API: model returned empty text. Falling back.",
-                        icon="⚠️",
                     )
             else:
                 st.toast(
                     "Gemini API: response blocked or empty. Falling back.",
-                    icon="⚠️",
                 )
                 st.sidebar.warning(
                     "**[Gemini Tier]** Response was blocked or contained no candidates."
@@ -1530,7 +1595,7 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
 
         except Exception as err:
             err_msg = str(err)
-            st.toast(f"Gemini API Error: {err_msg[:200]}", icon="⚠️")
+            st.toast(f"Gemini API Error: {err_msg[:200]}")
             st.sidebar.error(
                 f"**[Gemini Tier — Exception]**\n\n"
                 f"Type: `{type(err).__name__}`\n\n"
@@ -1564,14 +1629,13 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
                 st.toast(
                     "Anthropic API: empty response received. "
                     "Falling back to rule parser.",
-                    icon="⚠️",
                 )
             else:
                 return message.content[0].text.strip(), chart_cmd
 
         except Exception as err:
             err_msg = str(err)
-            st.toast(f"Anthropic API Error: {err_msg[:200]}", icon="⚠️")
+            st.toast(f"Anthropic API Error: {err_msg[:200]}")
             st.sidebar.error(
                 f"**[Anthropic Tier — Exception]**\n\n"
                 f"Type: `{type(err).__name__}`\n\n"
@@ -2032,7 +2096,7 @@ def main():
     # Guard clause: Stop processing gracefully if no day-logs were resolvable for the window
     if df_raw is None or df_raw.empty:
         st.info(
-            f"ℹ️ No telemetry logs were retrievable for the selected window "
+            f"No telemetry logs were retrievable for the selected window "
             f"({lookback_days} day(s) ending {target_evaluation_date.isoformat()}). "
             f"This can happen for future dates, pipeline gaps, or an unset GITHUB_USER/GITHUB_REPO."
         )
@@ -2073,8 +2137,8 @@ def main():
         return
 
     if df_fetched is None or df_fetched.empty:
-        st.warning("⚠️ No matching overlapping telemetry logs found for the selected horizon.")
-        st.info("💡 Please select a broader time window (like 15-Day or 30-Day Rolling Trends) in the sidebar to populate data indices.")
+        st.warning("No matching overlapping telemetry logs found for the selected horizon.")
+        st.info("Please select a broader time window (like 15-Day or 30-Day Rolling Trends) in the sidebar to populate data indices.")
         st.stop()
 
     # =============================================================================
@@ -2144,11 +2208,11 @@ def main():
         st.write("---")
 
         render_page_header(
-            "🗺️ Macro Spatial Congestion Map & Network Analytical Cockpit",
+            "Macro Spatial Congestion Map & Network Analytical Cockpit",
             "Network-wide bottleneck triage across every monitored corridor, ranked and mapped for capital allocation decisions"
         )
 
-        with st.expander("📐 Methodology & Mathematical Framework", expanded=True):
+        with st.expander("Methodology & Mathematical Framework", expanded=True):
             st.markdown(
                 "**Data Transformation:** Every monitored road link (`shapefile_segment_name`) is aggregated across "
                 "its parent `corridor_name` and its full ingested time window. Peak-hour rows are isolated to "
@@ -2167,9 +2231,9 @@ def main():
             )
             st.markdown(
                 "**Risk Tiering Thresholds** (applied to $\\overline{TTI}_s$ per segment):\n"
-                "- 🔴 **Heavy Congestion Bottleneck:** $TTI \\ge 1.25$\n"
-                "- 🟠 **Moderate Traffic / Delays:** $1.05 \\le TTI < 1.25$\n"
-                "- 🟢 **Free-Flowing Baseline:** $TTI < 1.05$"
+                "-  **Heavy Congestion Bottleneck:** $TTI \\ge 1.25$\n"
+                "-  **Moderate Traffic / Delays:** $1.05 \\le TTI < 1.25$\n"
+                "-  **Free-Flowing Baseline:** $TTI < 1.05$"
             )
 
         st.write("---")
@@ -2193,7 +2257,7 @@ def main():
         df_ov = df_ov_base[df_ov_base["corridor_name"].isin(sel_corridors_ov)] if sel_corridors_ov else df_ov_base.copy()
 
         if df_ov.empty:
-            st.warning("⚠️ No records match the current corridor filter — broaden the selection above.")
+            st.warning("No records match the current corridor filter — broaden the selection above.")
         else:
             peak_hours_ov = [8, 9, 10, 17, 18, 19, 20]
             offpeak_hours_ov = [23, 0, 1, 2, 3, 4, 5]
@@ -2229,21 +2293,21 @@ def main():
 
             def _ov_tier(t):
                 if t >= 1.25:
-                    return "🔴 Heavy Congestion Bottleneck"
+                    return " Heavy Congestion Bottleneck"
                 elif t >= 1.05:
-                    return "🟠 Moderate Traffic/Delays"
-                return "🟢 Free-Flowing Baseline"
+                    return " Moderate Traffic/Delays"
+                return " Free-Flowing Baseline"
 
             df_seg_ov["risk_tier"] = df_seg_ov["mean_tti"].apply(_ov_tier)
             tier_colors_ov = {
-                "🔴 Heavy Congestion Bottleneck": "#DC2626",
-                "🟠 Moderate Traffic/Delays": "#D97706",
-                "🟢 Free-Flowing Baseline": "#16A34A",
+                "Heavy Congestion Bottleneck": "#DC2626",
+                "Moderate Traffic/Delays": "#D97706",
+                "Free-Flowing Baseline": "#16A34A",
             }
 
-            n_heavy = int((df_seg_ov["risk_tier"] == "🔴 Heavy Congestion Bottleneck").sum())
-            n_mod = int((df_seg_ov["risk_tier"] == "🟠 Moderate Traffic/Delays").sum())
-            n_free = int((df_seg_ov["risk_tier"] == "🟢 Free-Flowing Baseline").sum())
+            n_heavy = int((df_seg_ov["risk_tier"] == " Heavy Congestion Bottleneck").sum())
+            n_mod = int((df_seg_ov["risk_tier"] == " Moderate Traffic/Delays").sum())
+            n_free = int((df_seg_ov["risk_tier"] == " Free-Flowing Baseline").sum())
             network_health_pct = (n_free / len(df_seg_ov) * 100.0) if len(df_seg_ov) else 0.0
 
             # ── Corridor-wise leaderboard (built ahead of KPIs so we can name the priority corridor) ──
@@ -2311,11 +2375,11 @@ def main():
 
             st.markdown(
                 f'<div class="h1-callout" style="border-left-color:#1E40AF;">'
-                f'📊 <b>Statistical Verdict:</b> {len(df_seg_ov)} monitored segments across {df_seg_ov["corridor_name"].nunique()} '
+                f' <b>Statistical Verdict:</b> {len(df_seg_ov)} monitored segments across {df_seg_ov["corridor_name"].nunique()} '
                 f'corridors resolve into {n_heavy} heavy-bottleneck, {n_mod} moderate-delay, and {n_free} free-flowing links '
                 f'(network free-flow health = {network_health_pct:.1f}%). Spatial clustering of red markers indicates '
                 f'geographically concentrated — not randomly scattered — congestion, consistent with structural rather than isolated causes.'
-                f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Prioritize capital review for the '
+                f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Prioritize capital review for the '
                 f'{n_heavy} red-tier segments first — cross-reference with Hypothesis 3 (Geometric Constraints) to confirm '
                 f'whether the bottleneck is structural (candidate for lane-widening CapEx) or purely temporal (candidate for '
                 f'signal retiming). Moderate-tier (orange) segments should be scheduled for signal-timing review before they '
@@ -2339,8 +2403,8 @@ def main():
                     width="stretch", hide_index=True, height=440,
                 )
                 st.caption(
-                    "📊 Statistical Verdict: Corridors are ranked by mean TTI, the primary congestion severity metric. "
-                    "🏛️ Business Insight: The top 2–3 rows represent the network's highest capital-allocation priority."
+                    "Statistical Verdict: Corridors are ranked by mean TTI, the primary congestion severity metric. "
+                    "Business Insight: The top 2–3 rows represent the network's highest capital-allocation priority."
                 )
 
             # ── Macro Spatial Analytics Summary Callouts ────────────────────────────
@@ -2353,7 +2417,7 @@ def main():
             sum_c1, sum_c2 = st.columns(2)
             with sum_c1:
                 render_callout(
-                    f"<b>🔴 Network Bottleneck Concentration:</b> {n_heavy} segments ({n_heavy / len(df_seg_ov) * 100:.1f}% of "
+                    f"<b> Network Bottleneck Concentration:</b> {n_heavy} segments ({n_heavy / len(df_seg_ov) * 100:.1f}% of "
                     f"filtered network) currently breach the TTI ≥ 1.25 heavy-congestion threshold. "
                     f"{'Total cumulative delay across the visible network is ' + format(total_delay_network, ',.0f') + ' hours.' if pd.notna(total_delay_network) else ''}",
                     border_color="#DC2626",
@@ -2361,7 +2425,7 @@ def main():
             with sum_c2:
                 if worst_corridor is not None:
                     render_callout(
-                        f"<b>🏛️ Priority Corridor Callout:</b> <b>{worst_corridor['corridor_name']}</b> ranks worst "
+                        f"<b> Priority Corridor Callout:</b> <b>{worst_corridor['corridor_name']}</b> ranks worst "
                         f"(mean TTI {worst_corridor['mean_tti']:.2f}, peak TTI {worst_corridor['peak_tti']:.2f}) — recommend "
                         f"first-wave capital review. <b>{best_corridor['corridor_name']}</b> operates closest to free-flow "
                         f"(mean TTI {best_corridor['mean_tti']:.2f}) and can serve as the network's design-standard benchmark.",
@@ -2415,7 +2479,7 @@ def main():
             "question requires."
         )
         render_callout(
-            "🔗 <b>Single-segment corridors:</b> if a corridor has only one monitored segment, there is no upstream "
+            "<b>Single-segment corridors:</b> if a corridor has only one monitored segment, there is no upstream "
             "neighbor to test against — so the causal test can't check \"did the queue start somewhere else and "
             "spill in.\" Instead it checks the only thing that's left: is the segment itself congested, and does "
             "that congestion persist into the next interval, at least twice. That is a self-persistence test, not "
@@ -2423,7 +2487,7 @@ def main():
             border_color="#3498db"
         )
  
-        with st.expander("📐 Formula reference"):
+        with st.expander("Formula reference"):
             st.markdown("A segment is a confirmed root cause only if all four conditions hold:")
             m1, m2, m3, m4 = st.columns(4)
             with m1:
@@ -2664,7 +2728,7 @@ def main():
             )
             if rc_top['segment_id'] != top_row['segment_id']:
                 render_callout(
-                    f"⚠️ <b>Why the \"declared bottleneck\" and the \"#1 priority segment\" can differ:</b> "
+                    f"<b>Why the \"declared bottleneck\" and the \"#1 priority segment\" can differ:</b> "
                     f"<code>{rc_top['segment_id']}</code> has the most <b>verified causal events</b> — direct "
                     f"evidence it originates a queue. <code>{top_row['segment_id']}</code> has the highest "
                     f"<b>MCBI score</b> — a blend of tail severity, how often it's congested, how early it breaks "
@@ -3510,7 +3574,7 @@ def main():
             "- **Quadrant III (Nominal Flow):** Operating within design parameters."
         )
 
-        with st.expander("📐 Methodology & Mathematical Framework", expanded=True):
+        with st.expander("Methodology & Mathematical Framework", expanded=True):
             st.markdown(
                 "**Data Transformation:** Raw telemetry is aggregated to segment level, split into a peak-hour "
                 "slice (`{08:00–10:00, 17:00–20:00}` IST) and an off-peak slice (`{23:00–05:00}` IST). Three "
@@ -3670,14 +3734,14 @@ def main():
             worst_seg = df_seg[df_seg["classification"] == "Quadrant I: Persistent Congestion"].sort_values("mean_offpeak_tti", ascending=False).iloc[0]
             worst_corr = df_corr_h3.sort_values("pct_persistent", ascending=False).iloc[0]
             render_callout(
-                f"🔴 <b>Worst Segment:</b> <code>{worst_seg['shapefile_segment_name']}</code> "
+                f"<b>Worst Segment:</b> <code>{worst_seg['shapefile_segment_name']}</code> "
                 f"(Corridor: {worst_seg['corridor_name']}) — Off-Peak TTI: <b>{worst_seg['mean_offpeak_tti']:.2f}</b>, "
                 f"Peak TTI: <b>{worst_seg['mean_peak_tti']:.2f}</b>. "
                 f"This segment fails even under zero-volume night conditions, confirming a geometric capacity deficit. "
-                f"<br><br>🏗️ <b>Engineering Recommendation:</b> Immediate on-site audit for physical lane-drop points, "
+                f"<br><br> <b>Engineering Recommendation:</b> Immediate on-site audit for physical lane-drop points, "
                 f"poorly spaced bus bays, or signal clustering within 1,000 m. Capital intervention required — "
                 f"signal retiming alone will not resolve this node.<br><br>"
-                f"📊 <b>Worst Corridor:</b> <code>{worst_corr['corridor_name']}</code> — "
+                f"<b>Worst Corridor:</b> <code>{worst_corr['corridor_name']}</code> — "
                 f"{worst_corr['pct_persistent']:.0f}% of its segments are Quadrant I Persistent.",
                 border_color="#991B1B"
             )
@@ -3749,11 +3813,11 @@ def main():
 
         st.markdown(
             f'<div class="h1-callout" style="border-left-color:#991B1B;">'
-            f'📊 <b>Statistical Verdict:</b> {n_q1} of {len(df_seg)} segments in scope ({n_q1 / max(len(df_seg),1) * 100:.1f}%) '
+            f' <b>Statistical Verdict:</b> {n_q1} of {len(df_seg)} segments in scope ({n_q1 / max(len(df_seg),1) * 100:.1f}%) '
             f'satisfy the Q-I dual-threshold test (off-peak TTI ≥ 1.5 <b>and</b> peak TTI ≥ 2.2), meaning delay '
             f'persists independent of traffic volume. A further {n_q2} segments ({n_q2 / max(len(df_seg),1) * 100:.1f}%) are '
             f'Q-II — clean at night, congested only at peak — confirming their bottleneck is demand-driven, not geometric.'
-            f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Red (Q-I) markers on the map are candidates for '
+            f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Red (Q-I) markers on the map are candidates for '
             f'physical capital works — lane widening, bus bay recessing, or signal-spacing audits within 1,000 m. '
             f'Amber (Q-II) markers should route to adaptive signal retiming or demand management first, since civil works '
             f'would be a wasted spend on a problem that clears itself outside rush hour.</div>',
@@ -3837,11 +3901,11 @@ def main():
             plt.close(fig_q3)
             st.markdown(
                 f'<div class="h1-callout" style="border-left-color:#991B1B;">'
-                f'📊 <b>Statistical Verdict:</b> The dashed threshold lines partition the feature space into the three '
+                f' <b>Statistical Verdict:</b> The dashed threshold lines partition the feature space into the three '
                 f'research-blueprint quadrants. Points in the top-right (red) cluster breach both the off-peak (≥ 1.5) '
                 f'<b>and</b> peak (≥ 2.2) thresholds simultaneously — congestion that cannot be explained by demand '
                 f'volume alone, since it persists at 3 AM.'
-                f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Segments annotated in the top-right zone should '
+                f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Segments annotated in the top-right zone should '
                 f'be escalated directly to civil engineering for a physical audit; segments sitting on the peak-threshold '
                 f'line but below the off-peak line (Q-II) should instead go to the traffic-signals team for retiming '
                 f'before any capital budget is committed.</div>',
@@ -3883,11 +3947,11 @@ def main():
             plt.close(fig_lane_h3)
             st.markdown(
                 f'<div class="h1-callout" style="border-left-color:#D97706;">'
-                f'📊 <b>Statistical Verdict:</b> Positive $\\Delta$Lanes values mark a physical downstream road narrowing '
+                f' <b>Statistical Verdict:</b> Positive $\\Delta$Lanes values mark a physical downstream road narrowing '
                 f'(the segment has more lanes than the one after it). Higher median Peak TTI in the positive-$\\Delta$Lanes '
                 f'bins — validated formally by the Mann-Whitney U test below — confirms lane drops are a measurable '
                 f'chokepoint driver rather than coincidental placement.'
-                f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Segments with $\\Delta$Lanes &gt; 0 and high '
+                f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Segments with $\\Delta$Lanes &gt; 0 and high '
                 f'Peak TTI are prime candidates for downstream lane-addition CapEx; where widening is infeasible, deploy '
                 f'a merge-taper redesign or dynamic lane-use signage 300–500 m upstream of the drop point.</div>',
                 unsafe_allow_html=True,
@@ -3911,7 +3975,7 @@ def main():
         if has_scipy_h3 and len(p_drop) >= 5 and len(p_uniform) >= 5:
             mw_stat, mw_p = _scipy_stats.mannwhitneyu(p_drop, p_uniform, alternative="greater")
             mw_chip_color = "#991B1B" if mw_p < 0.05 else "#166534"
-            mw_verdict = "✅ Lane drops cause significantly higher TTI (p < 0.05)" if mw_p < 0.05 else "⚠️ Difference not statistically significant at p = 0.05"
+            mw_verdict = " Lane drops cause significantly higher TTI (p < 0.05)" if mw_p < 0.05 else " Difference not statistically significant at p = 0.05"
             mwc1, mwc2, mwc3 = st.columns(3)
             with mwc1:
                 st.markdown(f'<div class="h1-kpi-card"><div class="h1-kpi-label">Mann-Whitney U Statistic</div><div class="h1-kpi-value" style="color:#1E40AF">{mw_stat:,.0f}</div><div class="h1-kpi-sub">Lane drop vs uniform cohort</div></div>', unsafe_allow_html=True)
@@ -3922,9 +3986,9 @@ def main():
             st.write("")
             st.markdown(
                 f'<div class="h1-callout" style="border-left-color:{mw_chip_color};">'
-                f'📊 <b>Statistical Verdict:</b> {mw_verdict}. H₀: Median TTI of lane-drop segments = Median TTI of '
+                f' <b>Statistical Verdict:</b> {mw_verdict}. H₀: Median TTI of lane-drop segments = Median TTI of '
                 f'uniform segments (drop cohort n={len(p_drop)}, uniform cohort n={len(p_uniform)}, one-sided test).'
-                f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> '
+                f'<br><br> <b>Business Insight & CUMTA Intervention:</b> '
                 + ("A significant result means lane-drop geometry is a confirmed, statistically defensible root cause — "
                    "sufficient to justify prioritizing these segments in the next capital works cycle over segments where "
                    "the difference could plausibly be random noise."
@@ -3982,10 +4046,10 @@ def main():
             _bus_corr = df_seg[["bus_friction", "mean_offpeak_tti"]].corr().iloc[0, 1] if len(df_seg) > 2 else float("nan")
             st.markdown(
                 f'<div class="h1-callout" style="border-left-color:#1E40AF;">'
-                f'📊 <b>Statistical Verdict:</b> The binned median trend (dark line) traces off-peak TTI as bus-stop '
+                f' <b>Statistical Verdict:</b> The binned median trend (dark line) traces off-peak TTI as bus-stop '
                 f'friction rises (Pearson r ≈ {_bus_corr:.2f} on segment-level data). A rising trend isolates where '
                 f'bus proximity plus narrow lanes creates baseline friction that exists even under zero demand.'
-                f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Segments in the highest-friction bin are '
+                f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Segments in the highest-friction bin are '
                 f'candidates for recessed bus bay construction, moving stops off the running lane rather than removing '
                 f'service.</div>',
                 unsafe_allow_html=True,
@@ -4005,10 +4069,10 @@ def main():
             _sig_thresh = df_seg["signal_density"].quantile(0.75) if len(df_seg) > 3 else float("nan")
             st.markdown(
                 f'<div class="h1-callout" style="border-left-color:#1E40AF;">'
-                f'📊 <b>Statistical Verdict:</b> The red dashed line marks the 75th-percentile signal-density threshold '
+                f' <b>Statistical Verdict:</b> The red dashed line marks the 75th-percentile signal-density threshold '
                 f'(D_sig ≈ {_sig_thresh:.3f}). Where the binned trend visibly steepens near this line, signal clustering — '
                 f'not traffic demand — is the dominant driver of off-peak delay past that density.'
-                f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> For segments past the inflection, pursue '
+                f'<br><br> <b>Business Insight & CUMTA Intervention:</b> For segments past the inflection, pursue '
                 f'signal consolidation or SCATS coordination within a 1,000 m radius rather than lane widening, since '
                 f'the friction source is intersection spacing, not carriageway capacity.</div>',
                 unsafe_allow_html=True,
@@ -4375,7 +4439,7 @@ def main():
             "week-over-week, justifies reversible lane infrastructure investment."
         )
 
-        with st.expander("📐 Methodology & Mathematical Framework", expanded=True):
+        with st.expander("Methodology & Mathematical Framework", expanded=True):
             st.markdown(
                 "**Data Transformation:** Every segment is tagged with an inferred `direction_track` (Direction A / "
                 "Direction B) using either an explicit compass-heading field or a name-token heuristic on the "
@@ -4569,13 +4633,13 @@ def main():
         if n_inverted > 0:
             worst_tidal = seg_tidal.sort_values("lambda_am", ascending=False).iloc[0]
             render_callout(
-                f"🔀 <b>Inversion Loop Confirmed:</b> <code>{worst_tidal['shapefile_segment_name']}</code> — "
+                f"<b>Inversion Loop Confirmed:</b> <code>{worst_tidal['shapefile_segment_name']}</code> — "
                 f"AM Λ = <b>{worst_tidal['lambda_am']:.2f}</b> (≥ 1.8), PM Λ = <b>{worst_tidal['lambda_pm']:.2f}</b> (≤ 0.55). "
                 f"This segment qualifies for reversible lane evaluation.<br><br>"
-                f"🏗️ <b>Engineering Recommendation:</b> "
+                f"<b>Engineering Recommendation:</b> "
                 + ("If no fixed median barrier — install dynamic reversible lane with automated bollard system. "
                    "If fixed barrier present — implement asymmetric signal green-time phasing (AM: +40% inbound, PM: +40% outbound).")
-                + (f"<br><br>📊 <b>KS Stability:</b> Week-over-week pattern is "
+                + (f"<br><br> <b>KS Stability:</b> Week-over-week pattern is "
                    + ("structurally stable (p = {:.4f} > 0.05) — safe to invest.".format(ks_p) if ks_stable else
                       "shifting week-to-week — monitor further before capital commitment.")
                    if ks_stable is not None else ""),
@@ -4583,13 +4647,13 @@ def main():
             )
         elif not np.isnan(wx_p) and wx_p < 0.01:
             render_callout(
-                f"📊 <b>Statistically Significant Asymmetry Confirmed</b> (Wilcoxon p = {wx_p:.4f} < 0.01) — "
+                f"<b>Statistically Significant Asymmetry Confirmed</b> (Wilcoxon p = {wx_p:.4f} < 0.01) — "
                 "directional imbalance is real but no full inversion loop detected. Consider asymmetric signal phasing.",
                 border_color="#D97706"
             )
         else:
             render_callout(
-                "✅ No statistically significant tidal inversion detected in this selection. "
+                "No statistically significant tidal inversion detected in this selection. "
                 "Standard balanced signal cycles are appropriate for this corridor set.",
                 border_color="#166534"
             )
@@ -4631,7 +4695,7 @@ def main():
                     f"<span style='color:#475569'>{r.get('corridor_name', '')}</span><br><hr style='margin:3px 0'>"
                     f"<b>AM Λ Ratio:</b> {r['lambda_am']:.3f}<br>"
                     f"<b>PM Λ Ratio:</b> {r['lambda_pm']:.3f}<br>"
-                    f"<b>Inversion Loop:</b> {'✅ Yes' if r['inversion_loop'] else '❌ No'}<br><hr style='margin:3px 0'>"
+                    f"<b>Inversion Loop:</b> {' Yes' if r['inversion_loop'] else ' No'}<br><hr style='margin:3px 0'>"
                     f"<b style='color:{clr_h5}'>Classification:</b> {tier}</div>"
                 )
                 folium.CircleMarker(
@@ -4654,11 +4718,11 @@ def main():
 
         st.markdown(
             f'<div class="h1-callout" style="border-left-color:#991B1B;">'
-            f'📊 <b>Statistical Verdict:</b> {n_inverted} of {len(seg_tidal)} segments in scope confirm a full Inversion '
+            f' <b>Statistical Verdict:</b> {n_inverted} of {len(seg_tidal)} segments in scope confirm a full Inversion '
             f'Loop (AM Λ ≥ 1.8 <b>and</b> PM Λ ≤ 0.55), and {strong_tidal_count} corridors qualify as Strong Tidal at the '
             f'aggregate level. The peak observed asymmetry ratio is Λ = {max_lambda:.2f}'
             + (f", statistically confirmed by the Wilcoxon signed-rank test (p = {wx_p:.4f})." if not np.isnan(wx_p) else ".")
-            + f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Red (Inversion Loop) markers are direct candidates '
+            + f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Red (Inversion Loop) markers are direct candidates '
             f'for dynamic reversible-lane infrastructure where no fixed median barrier exists, or asymmetric AM/PM signal '
             f'green-time phasing where a fixed barrier is present. Amber (Moderate Asymmetry) segments should be queued '
             f'for signal-phasing review only — the imbalance is real but not yet severe enough to justify reversible-lane '
@@ -4717,12 +4781,12 @@ def main():
             _n_pm_breach = int((corr_lambda[corr_lambda["derived_hour"].isin([17, 18, 19, 20])]["lambda"] <= 0.55).sum())
             st.markdown(
                 f'<div class="h1-callout" style="border-left-color:#991B1B;">'
-                f'📊 <b>Statistical Verdict:</b> Curves diverging from the Λ = 1.0 baseline (gray dashed line) confirm '
+                f' <b>Statistical Verdict:</b> Curves diverging from the Λ = 1.0 baseline (gray dashed line) confirm '
                 f'directional imbalance at that hour. Across the plotted corridors, {_n_am_breach} corridor-hour '
                 f'observations breach the AM threshold (Λ ≥ 1.8, red dotted line) and {_n_pm_breach} breach the PM '
                 f'threshold (Λ ≤ 0.55, amber dotted line) — a full Inversion Loop requires a single corridor to cross '
                 f'<b>both</b> lines within the same day.'
-                f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Any corridor line that clearly threads through '
+                f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Any corridor line that clearly threads through '
                 f'both threshold zones is a reversible-lane candidate; a corridor that stays flat near Λ = 1.0 all day '
                 f'needs no directional intervention — standard balanced signal timing is already appropriate.</div>',
                 unsafe_allow_html=True,
@@ -4757,11 +4821,11 @@ def main():
             _peak_b_hour = int(heat_b.mean(axis=0).idxmax()) if not heat_b.empty else None
             st.markdown(
                 f'<div class="h1-callout" style="border-left-color:#D97706;">'
-                f'📊 <b>Statistical Verdict:</b> Direction A\'s deepest red band centers on hour {_peak_a_hour if _peak_a_hour is not None else "N/A"} '
+                f' <b>Statistical Verdict:</b> Direction A\'s deepest red band centers on hour {_peak_a_hour if _peak_a_hour is not None else "N/A"} '
                 f'IST while Direction B peaks around hour {_peak_b_hour if _peak_b_hour is not None else "N/A"} IST. Non-overlapping dark bands between '
                 f'the two panels is the visual signature of tidal flow — each direction saturates at a different clock '
                 f'time rather than both peaking together.'
-                f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Where the two panels peak at opposite ends of '
+                f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Where the two panels peak at opposite ends of '
                 f'the day (AM vs PM), the corridor is a strong candidate for time-of-day asymmetric signal green-time '
                 f'allocation — giving Direction A more green time during its red band and Direction B more during its '
                 f'own, rather than a fixed 50/50 split.</div>',
@@ -4773,7 +4837,7 @@ def main():
         section_title("Statistical Test Results — Asymmetry Verification Suite")
         stat_c1, stat_c2, stat_c3 = st.columns(3)
         with stat_c1:
-            sw_txt = "Normal (use t-test)" if not shapiro_reject else "Non-normal → Wilcoxon selected ✅"
+            sw_txt = "Normal (use t-test)" if not shapiro_reject else "Non-normal → Wilcoxon selected "
             st.markdown(f'<div class="h1-kpi-card"><div class="h1-kpi-label">Shapiro-Wilk Normality Test</div><div class="h1-kpi-value" style="font-size:16px;color:#3498db">{sw_txt}</div><div class="h1-kpi-sub">Applied to difference vector D_t = X_t - Y_t</div></div>', unsafe_allow_html=True)
         with stat_c2:
             wx_color = "#991B1B" if (not np.isnan(wx_p) and wx_p < 0.01) else "#166534"
@@ -4783,7 +4847,7 @@ def main():
         with stat_c3:
             ks_label = f"{ks_p:.4f}" if not np.isnan(ks_p) else "Insufficient weeks"
             ks_color = "#166534" if ks_stable else ("#991B1B" if ks_stable is False else "#3498db")
-            ks_verdict = ("Stable week-over-week ✅" if ks_stable else ("Pattern shifted ⚠️" if ks_stable is False else "Need ≥2 weeks of data"))
+            ks_verdict = ("Stable week-over-week " if ks_stable else ("Pattern shifted " if ks_stable is False else "Need ≥2 weeks of data"))
             st.markdown(f'<div class="h1-kpi-card"><div class="h1-kpi-label">KS Test Stability (W₁ vs W₂)</div><div class="h1-kpi-value" style="color:{ks_color}">{ks_label}</div><div class="h1-kpi-sub">{ks_verdict}</div></div>', unsafe_allow_html=True)
         st.write("")
 
@@ -4834,7 +4898,7 @@ def main():
             "arrival 95% of the time — this is an acute structural unreliability that incident response alone cannot fix."
         )
 
-        with st.expander("📐 Methodology & Mathematical Framework", expanded=True):
+        with st.expander("Methodology & Mathematical Framework", expanded=True):
             st.markdown(
                 "**Data Transformation:** Raw peak-hour travel times are first cleaned with an IQR outlier filter "
                 "per segment (removing single-incident spikes so BTI reflects *recurring* unpredictability, not one-off "
@@ -4986,14 +5050,14 @@ def main():
         # ── Dynamic Callout ───────────────────────────────────────────────────
         if max_bti_row is not None:
             render_callout(
-                f"⏱️ <b>Most Unpredictable Segment:</b> <code>{max_bti_row['shapefile_segment_name']}</code> "
+                f"<b>Most Unpredictable Segment:</b> <code>{max_bti_row['shapefile_segment_name']}</code> "
                 f"(Corridor: {max_bti_row['corridor_name']}) — BTI = <b>{max_bti_row['bti_val']:.1f}%</b>, "
                 f"PTI = <b>{max_bti_row['pti_val']:.2f}</b>. A commuter on this link must budget "
                 f"{max_bti_row['bti_val']:.0f}% extra time above average to arrive on time 95% of the time.<br><br>"
-                f"🚦 <b>Engineering Recommendation:</b> "
+                f"<b>Engineering Recommendation:</b> "
                 + ("Signal timing audit + incident response staging within 500 m." if max_bti_row["sig_dist"] < 500
                    else "Parking ban enforcement and incident clearance zone designation.")
-                + f" PTI of {max_bti_row['pti_val']:.2f}× free-flow indicates "
+                + f"PTI of {max_bti_row['pti_val']:.2f}× free-flow indicates "
                 + ("severe structural capacity constraint." if max_bti_row["pti_val"] >= 2.5 else "moderate delay amplification."),
                 border_color="#991B1B"
             )
@@ -5051,11 +5115,11 @@ def main():
 
         st.markdown(
             f'<div class="h1-callout" style="border-left-color:#991B1B;">'
-            f'📊 <b>Statistical Verdict:</b> {n_alerts} of {len(metrics_h6)} segments in scope breach the BTI ≥ '
+            f' <b>Statistical Verdict:</b> {n_alerts} of {len(metrics_h6)} segments in scope breach the BTI ≥ '
             f'{bti_alert_threshold}% alert threshold, with network mean BTI at {mean_bti_net:.1f}% and mean PTI at '
             f'{mean_pti_net:.2f}×. The worst segment, <code>{max_bti_row["shapefile_segment_name"] if max_bti_row is not None else "N/A"}</code>, '
             f'requires a {max_bti_row["bti_val"]:.0f}% time buffer above its own average trip to hit 95% on-time reliability.'
-            f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Red (acute-alert) markers should receive incident '
+            f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Red (acute-alert) markers should receive incident '
             f'response staging and no-parking enforcement within 300 m immediately — this reduces the *variance* driving '
             f'unpredictability. Amber (monitored) markers are candidates for enhanced signal coordination before they '
             f'escalate; cross-check each red marker\'s PTI in the ledger — a high PTI alongside high BTI indicates the '
@@ -5119,11 +5183,11 @@ def main():
                                 else "predictable slowdown — variance stays controlled as TTI rises")
                 st.markdown(
                     f'<div class="h1-callout" style="border-left-color:#991B1B;">'
-                    f'📊 <b>Statistical Verdict:</b> $\\hat\\beta_1$ = {beta_h6[1]:.4f} and $\\hat\\beta_2$ = {beta_h6[2]:.4f} '
+                    f' <b>Statistical Verdict:</b> $\\hat\\beta_1$ = {beta_h6[1]:.4f} and $\\hat\\beta_2$ = {beta_h6[2]:.4f} '
                     f'(signal-proximity effect on variance). Since $\\hat\\beta_1$ '
-                    + ("&gt; 0, " if beta_h6[1] > 0 else "≤ 0, ")
+                    + ("&gt; 0, "if beta_h6[1] > 0 else "≤ 0, ")
                     + f'{beta1_interp} — the red fitted curve\'s slope is the direct empirical evidence for this.'
-                    f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> '
+                    f'<br><br> <b>Business Insight & CUMTA Intervention:</b> '
                     + ("Segments at the high-TTI end of this curve need variance-reduction investment (incident staging, "
                        "dynamic lane control) in addition to capacity relief, since congestion and unpredictability compound "
                        "together here." if beta_h6[1] > 0 else
@@ -5214,12 +5278,12 @@ def main():
                 _top_feat_row = rf_h6.sort_values("Importance", ascending=False).iloc[0]
                 st.markdown(
                     f'<div class="h1-callout" style="border-left-color:#1E40AF;">'
-                    f'📊 <b>Statistical Verdict:</b> <b>{_top_feat_row["Feature"]}</b> carries the highest permutation '
+                    f' <b>Statistical Verdict:</b> <b>{_top_feat_row["Feature"]}</b> carries the highest permutation '
                     f'importance ({_top_feat_row["Importance"]:.1f}%) for explaining BTI variance across segments in scope. '
                     f'The 5-fold CV stripplot on the right confirms this ranking is stable — each feature\'s five fold '
                     f'estimates (colored dots) cluster tightly rather than scattering widely, so the attribution isn\'t an '
                     f'artifact of one lucky data split.'
-                    f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Capital and operational spend to reduce '
+                    f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Capital and operational spend to reduce '
                     f'commuter uncertainty should target <b>{_top_feat_row["Feature"]}</b> first — it moves BTI more than '
                     f'any other tracked infrastructure attribute per unit of investment.</div>',
                     unsafe_allow_html=True,
@@ -5267,11 +5331,11 @@ def main():
                 _far_sig_bti = metrics_h6[metrics_h6["sig_dist"] > metrics_h6["sig_dist"].median()]["bti_val"].mean()
                 st.markdown(
                     f'<div class="h1-callout" style="border-left-color:#1E40AF;">'
-                    f'📊 <b>Statistical Verdict:</b> Segments closer than the median signal distance average '
+                    f' <b>Statistical Verdict:</b> Segments closer than the median signal distance average '
                     f'{_close_sig_bti:.1f}% BTI, versus {_far_sig_bti:.1f}% for segments farther away — a '
                     f'{"clear" if _close_sig_bti > _far_sig_bti else "weak"} gradient consistent with intersection '
                     f'queue back-pressure inflating unpredictability at close range.'
-                    f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Segments left of the alert-threshold line '
+                    f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Segments left of the alert-threshold line '
                     f'(closest to signals, highest BTI) are the highest-value targets for adaptive signal coordination '
                     f'(SCATS/SCOOT) — this class of fix addresses the *cause* of the queue back-pressure rather than just '
                     f'its downstream symptom.</div>',
@@ -5297,7 +5361,7 @@ def main():
                         "Segment": seg_uid_l[:22],
                         "Levene W": round(lev_stat, 3),
                         "p-value":  round(lev_p, 4),
-                        "Stability": "Structural Trait ✅" if lev_p > 0.05 else "Transient Factor ⚠️",
+                        "Stability": "Structural Trait " if lev_p > 0.05 else "Transient Factor ",
                         "Action": "Capital fix required" if lev_p > 0.05 else "Incident mgmt focus",
                     })
                 except Exception:
@@ -5319,11 +5383,11 @@ def main():
                 _n_transient = len(lev_df_h6) - n_structural
                 st.markdown(
                     f'<div class="h1-callout" style="border-left-color:#991B1B;">'
-                    f'📊 <b>Statistical Verdict:</b> Splitting each segment\'s peak-hour TTI series into three '
+                    f' <b>Statistical Verdict:</b> Splitting each segment\'s peak-hour TTI series into three '
                     f'chronological week-blocks and applying Levene\'s test (median-centered), {n_structural} of '
                     f'{len(lev_df_h6)} segments show statistically indistinguishable variance across weeks (p &gt; 0.05 — '
                     f'structural), while {_n_transient} show variance that shifts significantly week-to-week (p &lt; 0.05 — transient).'
-                    f'<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> "Structural Trait" segments need permanent '
+                    f'<br><br> <b>Business Insight & CUMTA Intervention:</b> "Structural Trait" segments need permanent '
                     f'capital fixes (widening, signal redesign) since their volatility is architectural and won\'t resolve '
                     f'on its own; "Transient Factor" segments should route to dynamic incident management and monitoring '
                     f'instead — capital spend there would not address a variance source that is already moving on its own.</div>',
@@ -5394,7 +5458,7 @@ def main():
             "flyover is flowing freely while the very next segment is failing."
         )
         render_callout(
-            "🛣️ <b>Reading the displacement rate:</b> a high displacement rate for a flyover-to-exit pair is direct, "
+            "<b>Reading the displacement rate:</b> a high displacement rate for a flyover-to-exit pair is direct, "
             "sequential evidence the flyover relocates its jam rather than eliminating it. A low rate means the "
             "flyover's free flow genuinely does not push extra load onto its immediate downstream exit.",
             border_color="#3498db"
@@ -5642,7 +5706,7 @@ def main():
 
                             if top_predictor in ('Flyover congested (0/1)', 'Flyover TTI'):
                                 render_callout(
-                                    f"📐 <b>Sequential displacement confirmed:</b> the flyover's own status is the "
+                                    f"<b>Sequential displacement confirmed:</b> the flyover's own status is the "
                                     f"top predictor of downstream exit congestion (CV AUC {cv_scores.mean():.3f}), "
                                     "ahead of time-of-day. This is direct, model-validated evidence that the flyover-exit pair "
                                     "shares a displacement relationship rather than the exit failing independently.",
@@ -5650,7 +5714,7 @@ def main():
                                 )
                             else:
                                 render_callout(
-                                    f"📐 <b>No strong sequential displacement signal:</b> time-of-day predicts downstream exit "
+                                    f"<b>No strong sequential displacement signal:</b> time-of-day predicts downstream exit "
                                     "congestion better than the paired flyover's own status — suggesting the exit's congestion "
                                     "is driven mainly by its own local demand pattern, not by the flyover pushing load onto it.",
                                     border_color="#3498db"
@@ -5713,7 +5777,7 @@ def main():
             "then compared against the single worst constituent micro-segment's own peak TTI."
         )
         render_callout(
-            "🔍 <b>Reading the dilution gap:</b> the gap between a macro-segment's combined peak TTI and its worst "
+            "<b>Reading the dilution gap:</b> the gap between a macro-segment's combined peak TTI and its worst "
             "constituent micro-segment's own peak TTI is the amount of real queue severity that a link-average "
             "dashboard would hide. This uses only real telemetry, `sequence_order`, and (when present) "
             "`free_flow_travel_time_seconds` — no distances are fabricated.",
@@ -5993,7 +6057,7 @@ def main():
             "corridors explicitly instead of hiding them inside a single dominant label."
         )
 
-        with st.expander("📐 Methodology & Mathematical Framework", expanded=True):
+        with st.expander("Methodology & Mathematical Framework", expanded=True):
             st.markdown(
                 "**1. Feature standardization.** Six per-segment features are z-scored before clustering so no "
                 "single metric (e.g. raw TTI) dominates purely due to scale: AM-peak mean TTI, PM-peak mean TTI, "
@@ -6035,10 +6099,10 @@ def main():
             corridor_opts_h9 = ["All Network"]
             if "corridor_name" in df_fetched.columns:
                 corridor_opts_h9 += sorted(df_fetched["corridor_name"].dropna().astype(str).unique().tolist())
-            scope_h9 = st.selectbox("🛣️ Scope", corridor_opts_h9, key="h9_scope_select")
+            scope_h9 = st.selectbox("Scope", corridor_opts_h9, key="h9_scope_select")
         with ctl_h9_b:
             temporal_h9 = st.selectbox(
-                "⏱️ Temporal Slice",
+                "Temporal Slice",
                 ["Whole-Day", "AM Peak (07:00–10:00)", "PM Peak (17:00–20:00)", "Off-Peak (23:00–05:00)"],
                 key="h9_temporal_select"
             )
@@ -6051,7 +6115,7 @@ def main():
                 "Stable Baseline Only",
                 "Overlapping / Hybrid Corridors Only",
             ]
-            category_h9 = st.selectbox("🏷️ Category / Archetype Filter", CATEGORY_OPTIONS_H9, key="h9_category_select")
+            category_h9 = st.selectbox("Category / Archetype Filter", CATEGORY_OPTIONS_H9, key="h9_category_select")
         st.caption(
             "The **Category filter** drives the spatial map, ledger, PCA maps, temporal drift plot, soft-membership "
             "heatmap, and parallel coordinates plot below. KPI counts and leaderboards always reflect the full "
@@ -6097,7 +6161,7 @@ def main():
 
         if len(df_tax_base) < 4:
             st.warning(
-                f"⚠️ The current scope (**{scope_h9}**) has only {len(df_tax_base)} monitored micro-segment(s) — "
+                f"The current scope (**{scope_h9}**) has only {len(df_tax_base)} monitored micro-segment(s) — "
                 "a 4-archetype Gaussian Mixture needs at least 4 to fit safely. Switch to **All Network** or a "
                 "larger corridor to view the soft-taxonomy suite."
             )
@@ -6178,7 +6242,7 @@ def main():
             df_tax_view = df_tax_base[cat_mask_h9].copy()
             if df_tax_view.empty:
                 df_tax_view = df_tax_base.copy()
-                st.info(f"ℹ️ No segments match **{category_h9}** in this scope/slice — showing full network view.")
+                st.info(f"No segments match **{category_h9}** in this scope/slice — showing full network view.")
 
             # ==============================================================================
             # 4. RESTORED SPATIAL MAP & SEGMENT CLASSIFICATION LEDGER
@@ -6208,6 +6272,13 @@ def main():
                   <span style="color:#7C3AED; font-size:15px;">&#9733;</span> <span style="color:#000000 !important; font-weight:600;">Overlapping / Hybrid (star)</span>
                 </div>"""
                 m9.get_root().html.add_child(folium.Element(legend_html_h9))
+                m9.get_root().header.add_child(folium.Element(
+                    "<style>.leaflet-tooltip { background-color: #FFFFFF !important; "
+                    "color: #0F172A !important; border: 1px solid #CBD5E1 !important; } "
+                    ".leaflet-tooltip-top:before, .leaflet-tooltip-bottom:before, "
+                    ".leaflet-tooltip-left:before, .leaflet-tooltip-right:before { "
+                    "border-top-color: #FFFFFF !important; border-bottom-color: #FFFFFF !important; }</style>"
+                ))
 
                 for _, r in df_tax_view.dropna(subset=["lat", "lon"]).iterrows():
                     primary_pct = r['primary_prob'] * 100
@@ -6220,12 +6291,15 @@ def main():
                         if r['is_hybrid'] else POLICY_BLEND_H9[r['primary_archetype']]
                     )
                     tooltip_html = (
+                        f'<div style="background-color:#FFFFFF !important; color:#0F172A !important; '
+                        f'padding:2px 4px;">'
                         f"<b>Segment:</b> {r['shapefile_segment_name']}<br>"
                         f"<b>Corridor:</b> {r['corridor_name']}<br>"
                         f"<b>Primary:</b> {r['primary_archetype']} ({primary_pct:.1f}%)<br>"
                         f"{secondary_line}"
                         f"<b>Peak TTI:</b> {r['mu_peak']:.2f} · <b>Off-Peak TTI:</b> {r['mu_offpeak']:.2f} · <b>BTI:</b> {r['bti_val']:.1f}%<br>"
                         f"<b>Recommended Intervention:</b> {intervention_txt}"
+                        f"</div>"
                     )
                     if r['is_hybrid']:
                         star_icon = folium.DivIcon(html=(
@@ -6262,9 +6336,9 @@ def main():
                     width="stretch", hide_index=True, height=440
                 )
             st.caption(
-                f"📊 **Statistical Verdict:** {len(df_tax_view)} of {len(df_tax_base)} monitored micro-segments match "
+                f"**Statistical Verdict:** {len(df_tax_view)} of {len(df_tax_base)} monitored micro-segments match "
                 f"the current filter (**{category_h9}**); star markers represent high-risk hybrids. "
-                f"🏛️ **Business Insight & CUMTA Intervention:** Use the ledger's Recommended Intervention column "
+                f"**Business Insight & CUMTA Intervention:** Use the ledger's Recommended Intervention column "
                 f"as a direct dispatch sheet for the filtered cohort."
             )
             st.write("---")
@@ -6280,7 +6354,7 @@ def main():
             st.write("")
             n_hybrid_h9 = int(df_tax_base['is_hybrid'].sum())
             render_callout(
-                f"🧬 <b>{n_hybrid_h9} of {len(df_tax_base)}</b> monitored micro-segments ({n_hybrid_h9 / max(len(df_tax_base),1) * 100:.1f}%) "
+                f"<b>{n_hybrid_h9} of {len(df_tax_base)}</b> monitored micro-segments ({n_hybrid_h9 / max(len(df_tax_base),1) * 100:.1f}%) "
                 f"are <b>high-risk hybrids</b> — no single archetype explains their behavior with $\\ge 85\\%$ confidence.",
                 border_color="#D97706"
             )
@@ -6305,7 +6379,7 @@ def main():
                 st.pyplot(fig_corr)
                 plt.close(fig_corr)
                 st.caption(
-                    "📊 **Statistical Verdict:** Pearson collinearity check across standardized clustering features. "
+                    "**Statistical Verdict:** Pearson collinearity check across standardized clustering features. "
                     "Cells closer to 1.0 (deep red) flag metrics carrying redundant signal."
                 )
 
@@ -6326,7 +6400,7 @@ def main():
                 st.pyplot(fig_pca_og)
                 plt.close(fig_pca_og)
                 st.caption(
-                    "📊 **Statistical Verdict:** Baseline 2D PCA projection of hard primary assignments. "
+                    "**Statistical Verdict:** Baseline 2D PCA projection of hard primary assignments. "
                     "Well-separated color clusters confirm distinct underlying behavior profiles."
                 )
 
@@ -6339,7 +6413,7 @@ def main():
             lb_col1, lb_col2 = st.columns(2)
 
             with lb_col1:
-                st.markdown("**✅ Top 10 Purest Fits** ($W_{s,k} \\ge 0.85$)")
+                st.markdown("** Top 10 Purest Fits** ($W_{s,k} \\ge 0.85$)")
                 purest_h9 = df_tax_base[df_tax_base['primary_prob'] >= 0.85].sort_values('primary_prob', ascending=False).head(10)
                 if purest_h9.empty:
                     st.info("No segment currently clears the 0.85 purity threshold in this scope/slice.")
@@ -6353,7 +6427,7 @@ def main():
                     )
 
             with lb_col2:
-                st.markdown("**⚠️ Top 10 High-Risk Hybrid / Overlapping Segments**")
+                st.markdown("** Top 10 High-Risk Hybrid / Overlapping Segments**")
                 hybrid_h9 = df_tax_base[df_tax_base['is_hybrid']].copy()
                 hybrid_h9['overlap_margin'] = hybrid_h9['primary_prob'] - hybrid_h9['secondary_prob']
                 hybrid_h9 = hybrid_h9.sort_values('overlap_margin', ascending=True).head(10)
@@ -6374,8 +6448,8 @@ def main():
                         width="stretch", hide_index=True, height=340
                     )
             st.markdown(
-                "📊 **Statistical Verdict:** Purity separates segments the GMM is confident about from segments "
-                "sitting genuinely between two Gaussian components. 🏛️ **Business Insight:** Hybrid segments should "
+                "**Statistical Verdict:** Purity separates segments the GMM is confident about from segments "
+                "sitting genuinely between two Gaussian components.  **Business Insight:** Hybrid segments should "
                 "receive a **blended** CapEx package rather than a single-archetype template."
             )
             st.write("---")
@@ -6424,12 +6498,13 @@ def main():
                 template="plotly_white", height=520, legend=dict(orientation='h', y=-0.18),
                 margin=dict(t=20)
             )
+            apply_pro_plotly_style(fig_g1)
             st.plotly_chart(fig_g1, use_container_width=True)
             st.caption(
-                f"📊 **Statistical Verdict:** {len(df_tax_view)} segments match **{category_h9}**"
-                + (f" and are highlighted against the {len(df_tax_base) - len(df_tax_view)} gray background points"
+                f"**Statistical Verdict:** {len(df_tax_view)} segments match **{category_h9}**"
+                + (f"and are highlighted against the {len(df_tax_base) - len(df_tax_view)} gray background points"
                    if show_dimmed_bg else " across the full network")
-                + ". 🏛️ **Business Insight & CUMTA Intervention:** Star-marked segments are dual-track capital "
+                + ".  **Business Insight & CUMTA Intervention:** Star-marked segments are dual-track capital "
                   "projects — do not force them into whichever archetype template happens to sort first."
             )
             st.write("---")
@@ -6470,12 +6545,13 @@ def main():
                 yaxis_title="Composite Delay Score [0.6×TTI + 0.4×(BTI/100)]",
                 template="plotly_white", height=500, legend=dict(orientation='h', y=-0.18), margin=dict(t=20)
             )
+            apply_pro_plotly_style(fig_g2)
             st.plotly_chart(fig_g2, use_container_width=True)
             worst_jump_arch = (arch_traj['composite_am'] - arch_traj['composite_offpeak']).idxmax() if len(arch_traj) else "N/A"
             st.caption(
-                f"📊 **Statistical Verdict:** Faint lines are individual segments from **{category_h9}** (sampled to "
+                f"**Statistical Verdict:** Faint lines are individual segments from **{category_h9}** (sampled to "
                 f"{sample_n_g2} for legibility); bold lines are archetype-average trajectories within that filter. "
-                f"**{worst_jump_arch}** shows the steepest Off-Peak → AM-Peak jump. 🏛️ **Business Insight & CUMTA "
+                f"**{worst_jump_arch}** shows the steepest Off-Peak → AM-Peak jump.  **Business Insight & CUMTA "
                 f"Intervention:** Corridors whose individual lines diverge sharply from their archetype average are "
                 f"early candidates for re-classification next cycle — deploy **adaptive signal timing** ahead of "
                 f"the peak-hour jump."
@@ -6490,18 +6566,21 @@ def main():
             z_heat = heat_df[[f"prob_{a}" for a in ARCHETYPES_H9]].values * 100
             fig_g3 = go.Figure(data=go.Heatmap(
                 z=z_heat, x=ARCHETYPES_H9, y=heat_df['shapefile_segment_name'],
-                colorscale='RdYlBu_r', colorbar=dict(title="Membership %"), zmin=0, zmax=100
+                colorscale='RdYlBu_r',
+                colorbar=dict(title="Membership %", title_font=dict(color="#0F172A"), tickfont=dict(color="#0F172A")),
+                zmin=0, zmax=100
             ))
             heat_height = max(420, min(1400, 14 * max(len(heat_df), 1)))
             fig_g3.update_layout(
                 xaxis_title="Policy Archetype", yaxis_title="Micro-Segment (grouped by corridor, alphabetical)",
                 template="plotly_white", height=heat_height, margin=dict(t=20)
             )
+            apply_pro_plotly_style(fig_g3)
             st.plotly_chart(fig_g3, use_container_width=True)
             st.caption(
-                f"📊 **Statistical Verdict:** Showing {len(heat_df)} segments matching **{category_h9}**. Rows with "
+                f"**Statistical Verdict:** Showing {len(heat_df)} segments matching **{category_h9}**. Rows with "
                 f"one dominant deep cell are cleanly separated; rows with two comparably warm cells are hybrid "
-                f"segments. 🏛️ **Business Insight & CUMTA Intervention:** Use this matrix as the master audit sheet "
+                f"segments.  **Business Insight & CUMTA Intervention:** Use this matrix as the master audit sheet "
                 f"when sizing next fiscal year's blended CapEx allocation for the selected cohort."
             )
             st.write("---")
@@ -6517,7 +6596,8 @@ def main():
                 line=dict(color=pcoord_df['archetype_code'],
                           colorscale=[[i / 3, ARCH_COLORS_H9[a]] for i, a in enumerate(ARCHETYPES_H9)],
                           showscale=True,
-                          colorbar=dict(tickvals=list(arch_code_map.values()), ticktext=list(arch_code_map.keys()))),
+                          colorbar=dict(tickvals=list(arch_code_map.values()), ticktext=list(arch_code_map.keys()),
+                                        tickfont=dict(color="#0F172A"))),
                 dimensions=[
                     dict(label="TTI Peak (avg AM/PM)", values=pcoord_df['mu_peak']),
                     dict(label="TTI Off-Peak", values=pcoord_df['mu_offpeak']),
@@ -6527,10 +6607,11 @@ def main():
                 ]
             ))
             fig_g4.update_layout(template="plotly_white", height=480, margin=dict(t=30))
+            apply_pro_plotly_style(fig_g4)
             st.plotly_chart(fig_g4, use_container_width=True)
             st.caption(
-                f"📊 **Statistical Verdict:** {len(pcoord_df)} segments from **{category_h9}** plotted across all "
-                f"five clustering features simultaneously. 🏛️ **Business Insight & CUMTA Intervention:** This view "
+                f"**Statistical Verdict:** {len(pcoord_df)} segments from **{category_h9}** plotted across all "
+                f"five clustering features simultaneously.  **Business Insight & CUMTA Intervention:** This view "
                 f"explains *why* a segment overlaps — e.g. high BTI (peak-shock trait) combined with high "
                 f"Lambda_max (tidal trait) — so the blended CapEx package can be feature-justified."
             )
@@ -6562,15 +6643,16 @@ def main():
                 labels={"Share": "Network Share [%] — Nearest-centroid classification per slice"}
             )
             fig_g5.update_layout(template="plotly_white", height=480, legend=dict(orientation='h', y=-0.18), margin=dict(t=20))
+            apply_pro_plotly_style(fig_g5)
             st.plotly_chart(fig_g5, use_container_width=True)
             am_chronic_share = dist_df[(dist_df['Slice'] == 'AM Peak') & (dist_df['Archetype'] == 'Chronic Structural')]['Share'].values
             off_chronic_share = dist_df[(dist_df['Slice'] == 'Off-Peak') & (dist_df['Archetype'] == 'Chronic Structural')]['Share'].values
             drift_pp = float(am_chronic_share[0] - off_chronic_share[0]) if len(am_chronic_share) and len(off_chronic_share) else 0.0
             st.caption(
-                f"📊 **Statistical Verdict:** Each segment is reclassified per slice against the nearest archetype "
+                f"**Statistical Verdict:** Each segment is reclassified per slice against the nearest archetype "
                 f"centroid on the composite-delay axis; the Chronic Structural share shifts by "
                 f"**{drift_pp:+.1f} percentage points** from Off-Peak to AM Peak. This graph is always network-wide "
-                f"regardless of the Category filter, so it stays a stable system-level reference. 🏛️ **Business "
+                f"regardless of the Category filter, so it stays a stable system-level reference.  **Business "
                 f"Insight & CUMTA Intervention:** A network-level drift toward Chronic Structural during peak hours "
                 f"confirms that infrastructure capacity — not just signal timing — is the binding constraint."
             )
@@ -6900,12 +6982,12 @@ def main():
                 baseline_display_aqi = float(np.interp(1.0, t_rg, pred_y)) if t_rg.min() <= 1.0 <= t_rg.max() else float(pred_y[0])
                 st.markdown(
                     f"<div class='h1-callout' style='border-left-color:#991B1B;'>"
-                    f"📊 <b>Statistical Verdict:</b> A {fit_kind_h10} replaces the prior global quadratic — the curve stays "
+                    f"<b>Statistical Verdict:</b> A {fit_kind_h10} replaces the prior global quadratic — the curve stays "
                     f"flat near the free-flow baseline (≈{baseline_display_aqi:.0f} AQI at TTI≈1.0) "
                     f"and only steepens past TTI = {inflection_tti}, matching the physical idling-emissions mechanism "
                     f"instead of forcing a symmetric parabola through sparse outliers. Fit quality: R² = {fit_r2_h10:.3f} "
                     f"against the observed telemetry sample (n={len(tti_vals)})."
-                    f"<br><br>🏛️ <b>Business Insight & CUMTA Intervention:</b> Segments consistently operating past the "
+                    f"<br><br> <b>Business Insight & CUMTA Intervention:</b> Segments consistently operating past the "
                     f"TTI = {inflection_tti} inflection are generating disproportionate localized emissions from idling, "
                     f"not just delay — prioritize them for anti-idling enforcement, signal-timing fixes that shorten queue "
                     f"dwell time, and roadside air-quality monitoring, rather than treating every high-TTI segment as an "
