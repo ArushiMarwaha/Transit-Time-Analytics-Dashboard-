@@ -4669,13 +4669,17 @@ def main():
 
         with cm_h5:
             m_h5 = folium.Map(location=[clat_h5, clon_h5], zoom_start=11 if selected_corridor_h5 == "All Corridors" else 13, tiles="CartoDB positron")
+            
+            # --- FIXED LEGEND HTML: Explicit black text and background overrides ---
             legend_html_h5 = """
             <div style="position:fixed;bottom:30px;left:30px;z-index:9999;background:white;
-                        padding:12px 16px;border-radius:8px;border:1px solid #CBD5E1;font-size:12px;font-family:sans-serif;">
-              <b style="color:#1E293B;">Tidal Flow Classification</b><br>
-              <span style="color:#991B1B;">&#9632;</span> Inversion Loop (Λ ≥ 1.8 AM, ≤ 0.55 PM)<br>
-              <span style="color:#D97706;">&#9632;</span> Moderate Asymmetry<br>
-              <span style="color:#166534;">&#9632;</span> Balanced Flow
+                        padding:12px 16px;border-radius:8px;border:1px solid #CBD5E1;font-size:12px;
+                        font-family:sans-serif;color:#000000 !important;box-shadow:0 2px 6px rgba(0,0,0,0.2);">
+              <b style="color:#000000 !important;font-size:13px;">Tidal Flow Classification</b><br>
+              <hr style="margin:4px 0 8px 0;border:0;border-top:1px solid #E2E8F0;">
+              <span style="color:#991B1B;font-size:14px;">&#9632;</span> <span style="color:#000000 !important;font-weight:600;">Inversion Loop (&Lambda; &ge; 1.8 AM, &le; 0.55 PM)</span><br>
+              <span style="color:#D97706;font-size:14px;">&#9632;</span> <span style="color:#000000 !important;font-weight:600;">Moderate Asymmetry</span><br>
+              <span style="color:#166534;font-size:14px;">&#9632;</span> <span style="color:#000000 !important;font-weight:600;">Balanced Flow</span>
             </div>"""
             m_h5.get_root().html.add_child(folium.Element(legend_html_h5))
 
@@ -4689,28 +4693,32 @@ def main():
                 else:
                     clr_h5 = "#166534"
                     tier = "Balanced — Standard signal cycle"
+                
+                # --- FIXED MAIN TOOLTIP HTML: High-contrast text colors ---
                 tip_h5 = (
-                    f"<div style='font-family:sans-serif;font-size:12px;min-width:220px'>"
-                    f"<b style='color:#1E293B'>{r['shapefile_segment_name']}</b><br>"
-                    f"<span style='color:#475569'>{r.get('corridor_name', '')}</span><br><hr style='margin:3px 0'>"
-                    f"<b>AM Λ Ratio:</b> {r['lambda_am']:.3f}<br>"
-                    f"<b>PM Λ Ratio:</b> {r['lambda_pm']:.3f}<br>"
-                    f"<b>Inversion Loop:</b> {' Yes' if r['inversion_loop'] else ' No'}<br><hr style='margin:3px 0'>"
-                    f"<b style='color:{clr_h5}'>Classification:</b> {tier}</div>"
+                    f"<div style='font-family:sans-serif;font-size:12px;min-width:220px;color:#000000 !important;background:white !important;padding:4px;'>"
+                    f"<b style='color:#000000 !important'>{r['shapefile_segment_name']}</b><br>"
+                    f"<span style='color:#334155 !important'>{r.get('corridor_name', '')}</span><br><hr style='margin:3px 0;border-top:1px solid #CBD5E1'>"
+                    f"<span style='color:#000000 !important'><b>AM &Lambda; Ratio:</b> {r['lambda_am']:.3f}</span><br>"
+                    f"<span style='color:#000000 !important'><b>PM &Lambda; Ratio:</b> {r['lambda_pm']:.3f}</span><br>"
+                    f"<span style='color:#000000 !important'><b>Inversion Loop:</b> {'Yes' if r['inversion_loop'] else 'No'}</span><br><hr style='margin:3px 0;border-top:1px solid #CBD5E1'>"
+                    f"<b style='color:{clr_h5} !important'>Classification:</b> <span style='color:#000000 !important'>{tier}</span></div>"
                 )
                 folium.CircleMarker(
                     location=[r["lat"], r["lon"]],
                     radius=7 if r["inversion_loop"] else 5,
-                    color=clr_h5, fill=True, fill_opacity=0.9,
+                    color=clr_h5, fill=True, fill_color=clr_h5, fill_opacity=0.9,
                     tooltip=folium.Tooltip(tip_h5, sticky=True)
                 ).add_to(m_h5)
 
             # Direction A markers (smaller, dashed outline)
             for _, r in df_h5[(df_h5["direction_track"] == "Direction A") & df_h5["lat"].notna()].drop_duplicates("shapefile_segment_name").head(50).iterrows():
+                # --- FIXED DIRECTION A TOOLTIP HTML: Explicit styling wrapper ---
+                tip_dir_a = f"<div style='color:#000000 !important;background:white !important;font-family:sans-serif;font-size:12px;padding:2px;'><b>Dir A:</b> {r['shapefile_segment_name']}</div>"
                 folium.CircleMarker(
                     location=[r["lat"], r["lon"]], radius=3,
                     color="#1E40AF", fill=False, opacity=0.5,
-                    tooltip=f"Dir A: {r['shapefile_segment_name']}"
+                    tooltip=folium.Tooltip(tip_dir_a, sticky=True)
                 ).add_to(m_h5)
 
             st_folium(m_h5, height=480, use_container_width=True, returned_objects=[],
