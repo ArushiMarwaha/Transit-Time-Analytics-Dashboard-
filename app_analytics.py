@@ -2230,9 +2230,9 @@ def main():
             )
             st.markdown(
                 "**Risk Tiering Thresholds** (applied to $\\overline{TTI}_s$ per segment):\n"
-                "-  **Heavy Congestion Bottleneck:** $TTI \\ge 1.25$\n"
-                "-  **Moderate Traffic / Delays:** $1.05 \\le TTI < 1.25$\n"
-                "-  **Free-Flowing Baseline:** $TTI < 1.05$"
+                "- **Heavy Congestion Bottleneck:** $TTI \\ge 1.25$\n"
+                "- **Moderate Traffic / Delays:** $1.05 \\le TTI < 1.25$\n"
+                "- **Free-Flowing Baseline:** $TTI < 1.05$"
             )
 
         st.write("---")
@@ -2290,7 +2290,7 @@ def main():
                 ["mean_tti", "peak_tti", "offpeak_tti", "p95_tti"]
             ].fillna(1.0)
 
-            # --- FIX 1: Clean risk_tier string outputs (removed leading spaces) ---
+            # --- Stripped leading spaces so string lookup matches tier_colors_ov ---
             def _ov_tier(t):
                 if t >= 1.25:
                     return "Heavy Congestion Bottleneck"
@@ -2373,11 +2373,31 @@ def main():
 
                 st_folium(m_ov, height=480, use_container_width=True, returned_objects=[], key="map_overview_macro_spatial")
 
-            # --- FIX 2: Replaced custom HTML div with render_callout helper ---
+            with c_lead_ov:
+                st.markdown("**Corridor-Wise Performance Leaderboard**")
+                st.dataframe(
+                    df_corr_ov.rename(columns={
+                        "corridor_name": "Corridor", "segments": "Segments",
+                        "mean_tti": "Mean TTI", "peak_tti": "Peak TTI",
+                        "offpeak_tti": "Off-Peak TTI", "total_delay_hours": "Total Delay Hours",
+                    }).style.format({
+                        "Mean TTI": "{:.3f}", "Peak TTI": "{:.3f}",
+                        "Off-Peak TTI": "{:.3f}", "Total Delay Hours": "{:.1f}",
+                    }).background_gradient(subset=["Mean TTI"], cmap="Reds")
+                    .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"),
+                                                                     ("color", "white"), ("font-weight", "600")]}]),
+                    width="stretch", hide_index=True, height=440,
+                )
+                st.caption(
+                    "Statistical Verdict: Corridors are ranked by mean TTI, the primary congestion severity metric. "
+                    "Business Insight: The top 2–3 rows represent the network's highest capital-allocation priority."
+                )
+
+            # ── Statistical Verdict Box ──
             render_callout(
                 f"<b>Statistical Verdict:</b> {len(df_seg_ov)} monitored segments across {df_seg_ov['corridor_name'].nunique()} "
                 f"corridors resolve into {n_heavy} heavy-bottleneck, {n_mod} moderate-delay, and {n_free} free-flowing links "
-                f"(network free-flow health = {network_health_pct:.1f}%). Spatial clustering of colored markers indicates "
+                f"(network free-flow health = {network_health_pct:.1f}%). Spatial clustering of red markers indicates "
                 f"geographically concentrated — not randomly scattered — congestion, consistent with structural rather than isolated causes.<br><br>"
                 f"<b>Business Insight & CUMTA Intervention:</b> Prioritize capital review for the "
                 f"{n_heavy} red-tier segments first — cross-reference with Hypothesis 3 (Geometric Constraints) to confirm "
@@ -2386,6 +2406,31 @@ def main():
                 f"escalate into red-tier bottlenecks.",
                 border_color="#1E40AF"
             )
+
+            # ── Macro Spatial Analytics Summary Callouts ────────────────────────────
+            st.write("---")
+            section_title("Macro Spatial Analytics Summary")
+            worst_corridor = df_corr_ov.iloc[0] if len(df_corr_ov) else None
+            best_corridor = df_corr_ov.iloc[-1] if len(df_corr_ov) else None
+            total_delay_network = df_corr_ov["total_delay_hours"].sum() if "total_delay_hours" in df_corr_ov.columns else np.nan
+
+            sum_c1, sum_c2 = st.columns(2)
+            with sum_c1:
+                render_callout(
+                    f"<b>Network Bottleneck Concentration:</b> {n_heavy} segments ({n_heavy / len(df_seg_ov) * 100:.1f}% of "
+                    f"filtered network) currently breach the TTI ≥ 1.25 heavy-congestion threshold. "
+                    f"{'Total cumulative delay across the visible network is ' + format(total_delay_network, ',.0f') + ' hours.' if pd.notna(total_delay_network) else ''}",
+                    border_color="#DC2626",
+                )
+            with sum_c2:
+                if worst_corridor is not None:
+                    render_callout(
+                        f"<b>Priority Corridor Callout:</b> <b>{worst_corridor['corridor_name']}</b> ranks worst "
+                        f"(mean TTI {worst_corridor['mean_tti']:.2f}, peak TTI {worst_corridor['peak_tti']:.2f}) — recommend "
+                        f"first-wave capital review. <b>{best_corridor['corridor_name']}</b> operates closest to free-flow "
+                        f"(mean TTI {best_corridor['mean_tti']:.2f}) and can serve as the network's design-standard benchmark.",
+                        border_color="#1E40AF",
+                    )
 
     # =============================================================================
     # HYPOTHESIS 1 - SYSTEMIC BOTTLENECK LOCALIZATION
