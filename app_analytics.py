@@ -468,7 +468,7 @@ def fetch_rolling_horizon_dataset(target_date: date, lookback_days: int) -> pd.D
 # 1. Page Configuration & Professional Engineering Styling Enforcements
 st.set_page_config(
     page_title="CUMTA Corridor Diagnostics Suite",
-    page_layout="wide",
+    layout="wide",
     initial_sidebar_state="expanded"
 )
 
