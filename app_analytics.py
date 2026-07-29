@@ -5570,7 +5570,9 @@ def main():
                     'p_downstream_congested_given_flyover_congested': merged.loc[merged['flyover_congested'], 'downstream_congested'].mean() if sum(merged['flyover_congested']) > 0 else 0,
                 })
 
-            pairs_report = pd.DataFrame(pair_records).sort_values('displacement_rate', ascending=False).reset_index(drop=True)
+            pairs_report = pd.DataFrame(pair_records)
+            if len(pairs_report) > 0:
+                pairs_report = pairs_report.sort_values('displacement_rate', ascending=False).reset_index(drop=True)
 
             if len(pairs_report) == 0:
                 st.info("Flyover-downstream pairs were found, but none have enough overlapping timestamped readings (>=20) to test.")
