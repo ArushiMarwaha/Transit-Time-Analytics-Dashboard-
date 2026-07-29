@@ -514,7 +514,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =============================================================================
-# SHARED PROFESSIONAL STYLING HELPERS - Atralita
+# SHARED PROFESSIONAL STYLING HELPERS 
 # =============================================================================
 STATUS_COLORS = {
     "Confirmed root cause": "#e74c3c",              # red    — act now
@@ -1533,7 +1533,6 @@ def _build_ai_response(user_msg: str, df: pd.DataFrame) -> tuple[str, str | None
             break
 
     # =========================================================================
-    # TIER 1 — Google Gemini (gemini-2.5-flash)
     # =========================================================================
     # Key retrieval: try st.secrets["GEMINI_API_KEY"] with bracket access first
     # (raises KeyError if missing, which is catchable and explicit), then fall
@@ -2291,12 +2290,13 @@ def main():
                 ["mean_tti", "peak_tti", "offpeak_tti", "p95_tti"]
             ].fillna(1.0)
 
+            # --- FIX 1: Clean risk_tier string outputs (removed leading spaces) ---
             def _ov_tier(t):
                 if t >= 1.25:
-                    return " Heavy Congestion Bottleneck"
+                    return "Heavy Congestion Bottleneck"
                 elif t >= 1.05:
-                    return " Moderate Traffic/Delays"
-                return " Free-Flowing Baseline"
+                    return "Moderate Traffic/Delays"
+                return "Free-Flowing Baseline"
 
             df_seg_ov["risk_tier"] = df_seg_ov["mean_tti"].apply(_ov_tier)
             tier_colors_ov = {
@@ -2305,12 +2305,12 @@ def main():
                 "Free-Flowing Baseline": "#16A34A",
             }
 
-            n_heavy = int((df_seg_ov["risk_tier"] == " Heavy Congestion Bottleneck").sum())
-            n_mod = int((df_seg_ov["risk_tier"] == " Moderate Traffic/Delays").sum())
-            n_free = int((df_seg_ov["risk_tier"] == " Free-Flowing Baseline").sum())
+            n_heavy = int((df_seg_ov["risk_tier"] == "Heavy Congestion Bottleneck").sum())
+            n_mod = int((df_seg_ov["risk_tier"] == "Moderate Traffic/Delays").sum())
+            n_free = int((df_seg_ov["risk_tier"] == "Free-Flowing Baseline").sum())
             network_health_pct = (n_free / len(df_seg_ov) * 100.0) if len(df_seg_ov) else 0.0
 
-            # ── Corridor-wise leaderboard (built ahead of KPIs so we can name the priority corridor) ──
+            # ── Corridor-wise leaderboard ──
             df_corr_ov = df_seg_ov.groupby("corridor_name").agg(
                 segments=("shapefile_segment_name", "count"),
                 mean_tti=("mean_tti", "mean"),
@@ -2321,7 +2321,7 @@ def main():
 
             priority_corridor_name = df_corr_ov.iloc[0]["corridor_name"] if len(df_corr_ov) else "N/A"
 
-            # ── KPI Row ──────────────────────────────────────────────────────────
+            # ── KPI Row ──
             render_kpi_row([
                 ("Network Free-Flow Health", f"{network_health_pct:.1f}%", "#16A34A", f"{n_free} of {len(df_seg_ov)} segments free-flowing"),
                 ("Heavy Bottleneck Segments", n_heavy, "#DC2626", "TTI ≥ 1.25 — capital-priority tier"),
@@ -2330,7 +2330,7 @@ def main():
             ])
             st.write("")
 
-            # ── Interactive Folium Map + Leaderboard side-by-side ──────────────────
+            # ── Interactive Folium Map + Leaderboard side-by-side ──
             section_title("Interactive Network Congestion Map & Corridor Leaderboard")
             c_map_ov, c_lead_ov = st.columns([3, 2])
 
@@ -2373,64 +2373,19 @@ def main():
 
                 st_folium(m_ov, height=480, use_container_width=True, returned_objects=[], key="map_overview_macro_spatial")
 
-            st.markdown(
-                f'<div class="h1-callout" style="border-left-color:#1E40AF;">'
-                f' <b>Statistical Verdict:</b> {len(df_seg_ov)} monitored segments across {df_seg_ov["corridor_name"].nunique()} '
-                f'corridors resolve into {n_heavy} heavy-bottleneck, {n_mod} moderate-delay, and {n_free} free-flowing links '
-                f'(network free-flow health = {network_health_pct:.1f}%). Spatial clustering of red markers indicates '
-                f'geographically concentrated — not randomly scattered — congestion, consistent with structural rather than isolated causes.'
-                f'<br><br> <b>Business Insight & CUMTA Intervention:</b> Prioritize capital review for the '
-                f'{n_heavy} red-tier segments first — cross-reference with Hypothesis 3 (Geometric Constraints) to confirm '
-                f'whether the bottleneck is structural (candidate for lane-widening CapEx) or purely temporal (candidate for '
-                f'signal retiming). Moderate-tier (orange) segments should be scheduled for signal-timing review before they '
-                f'escalate into red-tier bottlenecks.</div>',
-                unsafe_allow_html=True,
+            # --- FIX 2: Replaced custom HTML div with render_callout helper ---
+            render_callout(
+                f"<b>Statistical Verdict:</b> {len(df_seg_ov)} monitored segments across {df_seg_ov['corridor_name'].nunique()} "
+                f"corridors resolve into {n_heavy} heavy-bottleneck, {n_mod} moderate-delay, and {n_free} free-flowing links "
+                f"(network free-flow health = {network_health_pct:.1f}%). Spatial clustering of colored markers indicates "
+                f"geographically concentrated — not randomly scattered — congestion, consistent with structural rather than isolated causes.<br><br>"
+                f"<b>Business Insight & CUMTA Intervention:</b> Prioritize capital review for the "
+                f"{n_heavy} red-tier segments first — cross-reference with Hypothesis 3 (Geometric Constraints) to confirm "
+                f"whether the bottleneck is structural (candidate for lane-widening CapEx) or purely temporal (candidate for "
+                f"signal retiming). Moderate-tier (orange) segments should be scheduled for signal-timing review before they "
+                f"escalate into red-tier bottlenecks.",
+                border_color="#1E40AF"
             )
-
-            with c_lead_ov:
-                st.markdown("**Corridor-Wise Performance Leaderboard**")
-                st.dataframe(
-                    df_corr_ov.rename(columns={
-                        "corridor_name": "Corridor", "segments": "Segments",
-                        "mean_tti": "Mean TTI", "peak_tti": "Peak TTI",
-                        "offpeak_tti": "Off-Peak TTI", "total_delay_hours": "Total Delay Hours",
-                    }).style.format({
-                        "Mean TTI": "{:.3f}", "Peak TTI": "{:.3f}",
-                        "Off-Peak TTI": "{:.3f}", "Total Delay Hours": "{:.1f}",
-                    }).background_gradient(subset=["Mean TTI"], cmap="Reds")
-                    .set_table_styles([{"selector": "th", "props": [("background-color", "#1A293B"),
-                                                                     ("color", "white"), ("font-weight", "600")]}]),
-                    width="stretch", hide_index=True, height=440,
-                )
-                st.caption(
-                    "Statistical Verdict: Corridors are ranked by mean TTI, the primary congestion severity metric. "
-                    "Business Insight: The top 2–3 rows represent the network's highest capital-allocation priority."
-                )
-
-            # ── Macro Spatial Analytics Summary Callouts ────────────────────────────
-            st.write("---")
-            section_title("Macro Spatial Analytics Summary")
-            worst_corridor = df_corr_ov.iloc[0] if len(df_corr_ov) else None
-            best_corridor = df_corr_ov.iloc[-1] if len(df_corr_ov) else None
-            total_delay_network = df_corr_ov["total_delay_hours"].sum() if "total_delay_hours" in df_corr_ov.columns else np.nan
-
-            sum_c1, sum_c2 = st.columns(2)
-            with sum_c1:
-                render_callout(
-                    f"<b> Network Bottleneck Concentration:</b> {n_heavy} segments ({n_heavy / len(df_seg_ov) * 100:.1f}% of "
-                    f"filtered network) currently breach the TTI ≥ 1.25 heavy-congestion threshold. "
-                    f"{'Total cumulative delay across the visible network is ' + format(total_delay_network, ',.0f') + ' hours.' if pd.notna(total_delay_network) else ''}",
-                    border_color="#DC2626",
-                )
-            with sum_c2:
-                if worst_corridor is not None:
-                    render_callout(
-                        f"<b> Priority Corridor Callout:</b> <b>{worst_corridor['corridor_name']}</b> ranks worst "
-                        f"(mean TTI {worst_corridor['mean_tti']:.2f}, peak TTI {worst_corridor['peak_tti']:.2f}) — recommend "
-                        f"first-wave capital review. <b>{best_corridor['corridor_name']}</b> operates closest to free-flow "
-                        f"(mean TTI {best_corridor['mean_tti']:.2f}) and can serve as the network's design-standard benchmark.",
-                        border_color="#1E40AF",
-                    )
 
     # =============================================================================
     # HYPOTHESIS 1 - SYSTEMIC BOTTLENECK LOCALIZATION
