@@ -174,7 +174,6 @@ def master_dashboard_data_gateway(df: pd.DataFrame) -> pd.DataFrame:
 #   data_store/aqi_results/YYYY-MM-DD.csv       -> one file per day
 SEGMENTS_REF_URL = f"{GITHUB_RAW_BASE_URL}/segments_ref.csv"
 ROADS_RESULTS_URL = f"{GITHUB_RAW_BASE_URL}/roads_results.csv"
-CORRIDOR_COORDINATES_URL = f"{GITHUB_RAW_BASE_URL}/corridor_coordinates.csv"
 ROUTES_RESULTS_DIR_URL = f"{GITHUB_RAW_BASE_URL}/routes_results"
 WEATHER_RESULTS_DIR_URL = f"{GITHUB_RAW_BASE_URL}/weather_results"
 AQI_RESULTS_DIR_URL = f"{GITHUB_RAW_BASE_URL}/aqi_results"
@@ -185,7 +184,6 @@ AQI_RESULTS_DIR_URL = f"{GITHUB_RAW_BASE_URL}/aqi_results"
 LOCAL_DATA_STORE_DIR = "data_store"
 SEGMENTS_REF_LOCAL_PATH = os.path.join(LOCAL_DATA_STORE_DIR, "segments_ref.csv")
 ROADS_RESULTS_LOCAL_PATH = os.path.join(LOCAL_DATA_STORE_DIR, "roads_results.csv")
-CORRIDOR_COORDINATES_LOCAL_PATH = os.path.join(LOCAL_DATA_STORE_DIR, "corridor_coordinates.csv")
 ROUTES_RESULTS_LOCAL_DIR = os.path.join(LOCAL_DATA_STORE_DIR, "routes_results")
 WEATHER_RESULTS_LOCAL_DIR = os.path.join(LOCAL_DATA_STORE_DIR, "weather_results")
 AQI_RESULTS_LOCAL_DIR = os.path.join(LOCAL_DATA_STORE_DIR, "aqi_results")
@@ -300,21 +298,6 @@ def _fetch_roads_results() -> Optional[pd.DataFrame]:
     roads_df = remote_df if remote_df is not None else _local_get_csv(ROADS_RESULTS_LOCAL_PATH)
     return _collapse_to_one_row_per_segment(roads_df)
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _fetch_corridor_coordinates() -> Optional[pd.DataFrame]:
-    """Static per-segment geometry/layer reference table (corridor_coordinates)
-    -- carries network_layer_type (Flyover / At-Grade) plus lat/lon geometry,
-    one row per segment_uid. Fetched once at boot and cached, identically to
-    segments_ref and roads_results. Falls back to the local
-    `data_store/corridor_coordinates.csv` mirror whenever the GitHub raw
-    endpoint isn't reachable."""
-    remote_df = _http_get_csv(CORRIDOR_COORDINATES_URL)
-    df = remote_df if remote_df is not None else _local_get_csv(CORRIDOR_COORDINATES_LOCAL_PATH)
-    if df is None:
-        return None
-    if "segment_uid" in df.columns:
-        df = df.drop_duplicates(subset=["segment_uid"]).reset_index(drop=True)
-    return df
 
 def _asof_join_environmental(base_df: pd.DataFrame, time_col: str, env_df: pd.DataFrame, env_cols: list) -> pd.DataFrame:
     """
@@ -356,6 +339,77 @@ def _asof_join_environmental(base_df: pd.DataFrame, time_col: str, env_df: pd.Da
         return base_df
 
 
+def _fetch_single_day_tables(target_day: date) -> Optional[pd.DataFrame]:
+    """
+    Fetch and stitch one day's worth of the two dynamic pipeline tables --
+    routes_results (cycle-by-cycle) plus weather_results and aqi_results
+    (each ~every 3 hours) -- from the GitHub `data_store/` branch, joining
+    the environmental frames onto routes_results via a tolerance-bounded
+    nearest-timestamp match on segment_uid.
+
+    Returns None whenever the day's core routes_results log is missing
+    (pipeline timeout/empty tracking interval); weather/aqi gaps degrade
+    gracefully (NaN environmental fields) instead of dropping the whole day.
+    """
+    day_str = target_day.strftime('%Y-%m-%d')
+
+    routes_df = _http_get_csv(f"{ROUTES_RESULTS_DIR_URL}/{day_str}.csv")
+    if routes_df is None:
+        # Online export isn't there yet (404 / not pushed) -- fall back to
+        # the local workspace mirror before giving up on the day entirely.
+        routes_df = _local_get_csv(os.path.join(ROUTES_RESULTS_LOCAL_DIR, f"{day_str}.csv"))
+    if routes_df is None or 'segment_uid' not in routes_df.columns:
+        # routes_results is the backbone cycle-by-cycle table; without it
+        # there is nothing meaningful to stitch for this day.
+        return None
+
+    time_col = 'timestamp_utc' if 'timestamp_utc' in routes_df.columns else None
+    if time_col:
+        routes_df[time_col] = pd.to_datetime(routes_df[time_col], format='mixed', errors='coerce')
+        routes_df = routes_df.sort_values(time_col)
+
+    merged_df = routes_df
+
+    if time_col:
+        weather_df = _http_get_csv(f"{WEATHER_RESULTS_DIR_URL}/{day_str}.csv")
+        if weather_df is None:
+            weather_df = _local_get_csv(os.path.join(WEATHER_RESULTS_LOCAL_DIR, f"{day_str}.csv"))
+
+        aqi_df = _http_get_csv(f"{AQI_RESULTS_DIR_URL}/{day_str}.csv")
+        if aqi_df is None:
+            aqi_df = _local_get_csv(os.path.join(AQI_RESULTS_LOCAL_DIR, f"{day_str}.csv"))
+
+        merged_df = _asof_join_environmental(
+            merged_df, time_col, weather_df,
+            ['temperature_celsius', 'visibility_meters', 'precipitation_probability', 'weather_condition'],
+        )
+        merged_df = _asof_join_environmental(
+            merged_df, time_col, aqi_df,
+            ['local_aqi', 'air_quality_category', 'dominant_pollutant'],
+        )
+
+    # Semantic rename so the real database's aqi column matches the field the
+    # mid-layer gateway looks for.
+    if 'local_aqi' in merged_df.columns and 'indexes_aqi' not in merged_df.columns:
+        merged_df['indexes_aqi'] = merged_df['local_aqi']
+
+    merged_df['_source_log_date'] = day_str
+    return merged_df
+
+
+def _left_merge_static_asset(combined_df: pd.DataFrame, static_df: Optional[pd.DataFrame], asset_label: str) -> pd.DataFrame:
+    """Left-join a static reference table (segments_ref / roads_results) onto
+    the compiled rolling-horizon frame on segment_uid, only bringing in columns
+    that aren't already present (so dynamic-table columns always win)."""
+    if static_df is None:
+        st.sidebar.caption(f"Static {asset_label} unavailable -- related columns will use gateway fallbacks.")
+        return combined_df
+    if 'segment_uid' not in static_df.columns or 'segment_uid' not in combined_df.columns:
+        return combined_df
+    static_cols = [c for c in static_df.columns if c == 'segment_uid' or c not in combined_df.columns]
+    return combined_df.merge(static_df[static_cols], on='segment_uid', how='left')
+
+
 @st.cache_data(ttl=3600, max_entries=5, show_spinner=" Pulling & stitching historical telemetry tables from GitHub data_store")
 def fetch_rolling_horizon_dataset(target_date: date, lookback_days: int) -> pd.DataFrame:
     """
@@ -381,7 +435,6 @@ def fetch_rolling_horizon_dataset(target_date: date, lookback_days: int) -> pd.D
     # rolling window), never looped or searched for on a per-day basis.
     segments_ref_df = _fetch_segments_ref()
     roads_results_df = _fetch_roads_results()
-    corridor_coordinates_df = _fetch_corridor_coordinates()
 
     collected_frames = []
     missing_dates = []
@@ -395,7 +448,7 @@ def fetch_rolling_horizon_dataset(target_date: date, lookback_days: int) -> pd.D
 
     if missing_dates:
         st.sidebar.caption(
-            f" {len(missing_dates)} of {len(date_range)} day-log(s) unavailable "
+            f"{len(missing_dates)} of {len(date_range)} day-log(s) unavailable "
             f"(pipeline gaps/timeouts) and were skipped cleanly."
         )
 
@@ -408,7 +461,6 @@ def fetch_rolling_horizon_dataset(target_date: date, lookback_days: int) -> pd.D
     # tables onto the rolling daily pool via a standard left merge.
     combined_df = _left_merge_static_asset(combined_df, segments_ref_df, "segments_ref.csv")
     combined_df = _left_merge_static_asset(combined_df, roads_results_df, "roads_results.csv")
-    combined_df = _left_merge_static_asset(combined_df, corridor_coordinates_df, "corridor_coordinates.csv")
 
     return combined_df
 
