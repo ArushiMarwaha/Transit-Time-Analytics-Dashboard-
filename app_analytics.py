@@ -2441,7 +2441,7 @@ def main():
         apply_pro_plot_style()
  
         render_page_header(
-            "Hypothesis 1 · Systemic Bottleneck Localization (Atralita)",
+            "Hypothesis 1 · Systemic Bottleneck Localization ",
             "True root-cause bottlenecks vs. spillover / victim traffic, ranked for engineering triage"
         )
  
@@ -3188,7 +3188,7 @@ def main():
         apply_pro_plot_style()
  
         render_page_header(
-            "Hypothesis 2 · Temporal Peak Profiling (Atralita)",
+            "Hypothesis 2 · Temporal Peak Profiling",
             "Exact failure-and-recovery timing of each corridor, benchmarked weekday against weekend"
         )
  
@@ -4122,7 +4122,7 @@ def main():
         apply_pro_plot_style()
  
         render_page_header(
-            "Hypothesis 4 · Weather-Driven Variance (Atralita)",
+            "Hypothesis 4 · Weather-Driven Variance",
             "Isolating how much rainfall and low visibility degrade corridor capacity, segment by segment"
         )
  
@@ -5448,7 +5448,7 @@ def main():
         apply_pro_plot_style()
 
         render_page_header(
-            "Hypothesis 7 · The Flyover Exit Displacement Test (Atralita)",
+            "Hypothesis 7 · The Flyover Exit Displacement Test",
             "Pairing each flyover with its immediate downstream neighbor to test displacement, not relocation, of congestion"
         )
 
