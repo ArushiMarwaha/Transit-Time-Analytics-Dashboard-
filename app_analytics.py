@@ -5478,16 +5478,21 @@ def main():
         )
         st.write("---")
 
-        _h7_layer_is_heuristic = 'network_layer_type' not in df_fetched.columns
-        if _h7_layer_is_heuristic:
+        if 'network_layer_type' not in df_fetched.columns:
+            _corridor_coords_df = _fetch_corridor_coordinates()
+            if _corridor_coords_df is not None:
+                df_fetched = df_fetched.merge(_corridor_coords_df, on='shapefile_segment_name', how='left')
+
+        if 'network_layer_type' not in df_fetched.columns or df_fetched['network_layer_type'].isna().all():
             df_fetched['shapefile_segment_name_lower'] = df_fetched['shapefile_segment_name'].astype(str).str.lower()
             df_fetched['network_layer_type'] = np.where(
                 df_fetched['shapefile_segment_name_lower'].str.contains('flyover|elevated'),
                 'Express (Flyover)', 'At-Grade (Ground)'
             )
             st.warning(
-                "No `network_layer_type` column found — layer type is being guessed from a text match on the "
-                "segment name. Treat flyover tagging on this tab as a heuristic placeholder, not verified geometry."
+                "No `network_layer_type` column found in the telemetry feed and `data_store/corridor_coordinates.csv` "
+                "was unavailable — layer type is being guessed from a text match on the segment name. Treat flyover "
+                "tagging on this tab as a heuristic placeholder, not verified geometry."
             )
         if 'sequence_order' not in df_fetched.columns:
             st.error("This tab requires a `sequence_order` column to determine immediate downstream neighbors.")
