@@ -5523,19 +5523,6 @@ def main():
                 "The sequential displacement test cannot run on this dataset."
             )
         else:
-            # FIX 1: drop_duplicates on execution_timestamp before merging. Without
-            # this, duplicate timestamps for the same segment turn the join below
-            # into a many-to-many merge that can multiply row counts unexpectedly
-            # (and, on a real feed with repeated readings, hang or blow up memory).
-            #
-            # FIX 2: use merge_asof with a tolerance window instead of an exact-match
-            # merge. Flyover and downstream segments are often polled/logged at
-            # slightly different timestamps (different jobs, sub-second jitter), so
-            # an exact merge on execution_timestamp was matching almost nothing —
-            # every pair silently fell below the 20-interval minimum. merge_asof
-            # pairs each flyover reading with the nearest downstream reading within
-            # a tolerance window, which reflects "same traffic moment" more realistically.
-            
             try:
                 median_gap = df_fetched.sort_values('execution_timestamp')['execution_timestamp'].diff().median()
                 PAIR_MERGE_TOLERANCE = pd.Timedelta(median_gap) if pd.notna(median_gap) else pd.Timedelta('5min')
@@ -5592,7 +5579,6 @@ def main():
                     'flyover_congestion_rate': merged['flyover_congested'].mean(),
                     'downstream_congestion_rate': merged['downstream_congested'].mean(),
                     'displacement_rate': merged['displacement_event'].mean(),
-                    # conditional probabilities -- the clean statistical proof
                     'p_downstream_congested_given_flyover_free': merged.loc[~merged['flyover_congested'], 'downstream_congested'].mean() if sum(~merged['flyover_congested']) > 0 else 0,
                     'p_downstream_congested_given_flyover_congested': merged.loc[merged['flyover_congested'], 'downstream_congested'].mean() if sum(merged['flyover_congested']) > 0 else 0,
                 })
@@ -5663,7 +5649,6 @@ def main():
 
                 # --------------------------------------------------------------
                 # MACHINE LEARNING CROSS-CHECK: Random Forest Classifier
-                # Evaluating the SPECIFIC sequential relationship.
                 # --------------------------------------------------------------
                 st.write("---")
                 section_title("Machine Learning Cross-Check: Sequential Displacement Model")
@@ -5675,19 +5660,21 @@ def main():
                 )
 
                 pooled = pd.concat(pair_series_map.values(), ignore_index=True)
-                pooled['hour'] = pd.to_datetime(pooled['execution_timestamp']).dt.hour
-                pooled['hour_sin'] = np.sin(2 * np.pi * pooled['hour'] / 24.0)
-                pooled['hour_cos'] = np.cos(2 * np.pi * pooled['hour'] / 24.0)
-                pooled['flyover_congested_f'] = pooled['flyover_congested'].astype(float)
-                pooled['flyover_tti_f'] = pooled['flyover_tti'].astype(float)
-
-                feat_cols_h7 = ['flyover_congested_f', 'flyover_tti_f', 'hour_sin', 'hour_cos']
-                feat_labels_h7 = ['Flyover congested (0/1)', 'Flyover TTI', 'Hour (sin)', 'Hour (cos)']
-
-                X_h7 = pooled[feat_cols_h7]
-                y_h7 = pooled['downstream_congested'].astype(int)
-
+                
+                # Check if there are enough pooled pairs to run the ML model
                 if len(pooled) > 50:
+                    pooled['hour'] = pd.to_datetime(pooled['execution_timestamp']).dt.hour
+                    pooled['hour_sin'] = np.sin(2 * np.pi * pooled['hour'] / 24.0)
+                    pooled['hour_cos'] = np.cos(2 * np.pi * pooled['hour'] / 24.0)
+                    pooled['flyover_congested_f'] = pooled['flyover_congested'].astype(float)
+                    pooled['flyover_tti_f'] = pooled['flyover_tti'].astype(float)
+
+                    feat_cols_h7 = ['flyover_congested_f', 'flyover_tti_f', 'hour_sin', 'hour_cos']
+                    feat_labels_h7 = ['Flyover congested (0/1)', 'Flyover TTI', 'Hour (sin)', 'Hour (cos)']
+
+                    X_h7 = pooled[feat_cols_h7]
+                    y_h7 = pooled['downstream_congested'].astype(int)
+
                     try:
                         from sklearn.ensemble import RandomForestClassifier
                         from sklearn.model_selection import cross_val_score, StratifiedKFold
@@ -5704,7 +5691,6 @@ def main():
                                 "flyover/downstream tagging is picking up more than a handful of pairs."
                             )
                         else:
-                            # Never ask for more folds than the rarer class can support.
                             n_folds = max(2, min(5, min_class_count))
                             cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
 
@@ -5758,6 +5744,7 @@ def main():
                         st.warning("`scikit-learn` is not installed in your environment. The Random Forest classification cross-check has been bypassed. Run `pip install scikit-learn` to enable this module.")
                     except Exception as e:
                         st.warning(f"The ML cross-check could not be fit on this pooled dataset ({type(e).__name__}: {e}). The rest of this tab is unaffected.")
+                
                 else:
                     st.info("Not enough paired intervals to fit a reliable cross-validated model on this dataset.")
 
