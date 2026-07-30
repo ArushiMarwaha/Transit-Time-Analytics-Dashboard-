@@ -5448,7 +5448,7 @@ def main():
         apply_pro_plot_style()
 
         render_page_header(
-            "Hypothesis 7 · The Flyover Exit Displacement Test",
+            "Hypothesis 7 · The Flyover Exit Displacement Test (Atralita)",
             "Pairing each flyover with its immediate downstream neighbor to test displacement, not relocation, of congestion"
         )
 
@@ -5471,7 +5471,7 @@ def main():
             "flyover is flowing freely while the very next segment is failing."
         )
         render_callout(
-            "<b>Reading the displacement rate:</b> a high displacement rate for a flyover-to-exit pair is direct, "
+            "🛣️ <b>Reading the displacement rate:</b> a high displacement rate for a flyover-to-exit pair is direct, "
             "sequential evidence the flyover relocates its jam rather than eliminating it. A low rate means the "
             "flyover's free flow genuinely does not push extra load onto its immediate downstream exit.",
             border_color="#3498db"
@@ -5503,32 +5503,51 @@ def main():
             sequence_order=('sequence_order', 'mean'),
         ).reset_index()
 
+        # Segments genuinely classified as an elevated/flyover STRUCTURE, as
+        # opposed to at-grade (ground-level) segments -- including ones that
+        # happen to sit physically underneath a flyover ("At-Grade (Below
+        # Flyover)" is still a ground-level road, not the flyover itself).
+        TRUE_FLYOVER_LAYER_VALUES = {'Express (Flyover)', 'Flyover', 'Elevated', 'Flyover (Elevated)'}
+        _available_layer_values = set(seg_table['network_layer_type'].dropna().unique())
+        _has_true_flyover_segment = len(_available_layer_values & TRUE_FLYOVER_LAYER_VALUES) > 0
+
         pairs = []
-        for corr, grp in seg_table.groupby('corridor_name'):
-            grp_sorted = grp.sort_values('sequence_order').reset_index(drop=True)
-            for i in range(len(grp_sorted) - 1):
-                if grp_sorted.loc[i, 'network_layer_type'] == 'Express (Flyover)':
-                    pairs.append({
-                        'corridor_name': corr,
-                        'flyover_segment': grp_sorted.loc[i, 'shapefile_segment_name'],
-                        'downstream_segment': grp_sorted.loc[i + 1, 'shapefile_segment_name'],
-                        'downstream_layer_type': grp_sorted.loc[i + 1, 'network_layer_type'],
-                    })
+        if _has_true_flyover_segment:
+            for corr, grp in seg_table.groupby('corridor_name'):
+                grp_sorted = grp.sort_values('sequence_order').reset_index(drop=True)
+                for i in range(len(grp_sorted) - 1):
+                    if grp_sorted.loc[i, 'network_layer_type'] in TRUE_FLYOVER_LAYER_VALUES:
+                        pairs.append({
+                            'corridor_name': corr,
+                            'flyover_segment': grp_sorted.loc[i, 'shapefile_segment_name'],
+                            'downstream_segment': grp_sorted.loc[i + 1, 'shapefile_segment_name'],
+                            'downstream_layer_type': grp_sorted.loc[i + 1, 'network_layer_type'],
+                        })
         pairs_df = pd.DataFrame(pairs)
 
-        if len(pairs_df) == 0:
+        if not _has_true_flyover_segment:
             st.info(
-                "No flyover segment in this feed has an immediate downstream neighbor to pair with (either no "
-                "segment is tagged Express (Flyover), or every flyover is the last segment in its corridor). "
+                "🛣️ **Hypothesis 7 is not applicable to this dataset.** Every segment in this corridor feed "
+                "is classified as at-grade (ground-level) -- the `network_layer_type` values present are: "
+                f"{', '.join(sorted(_available_layer_values)) if _available_layer_values else '(none found)'}. "
+                "This includes segments physically located *underneath* a flyover (`At-Grade (Below Flyover)`), "
+                "which are still ground-level roads, not the flyover structure itself. H7 specifically tests "
+                "whether traffic exiting an elevated flyover displaces congestion onto the next ground segment, "
+                "so it requires at least one segment genuinely tagged as elevated (e.g. `Flyover`, `Elevated`, "
+                "`Express (Flyover)`). No such segment exists in this corridor, so the sequential displacement "
+                "test has nothing to run against here."
+            )
+        elif len(pairs_df) == 0:
+            st.info(
+                "No flyover segment in this feed has an immediate downstream neighbor to pair with (every "
+                "flyover-tagged segment is the last segment in its corridor). "
                 "The sequential displacement test cannot run on this dataset."
             )
         else:
-            try:
-                median_gap = df_fetched.sort_values('execution_timestamp')['execution_timestamp'].diff().median()
-                PAIR_MERGE_TOLERANCE = pd.Timedelta(median_gap) if pd.notna(median_gap) else pd.Timedelta('5min')
-            except Exception:
-                PAIR_MERGE_TOLERANCE = pd.Timedelta('5min')
-
+            # FIX 1: drop_duplicates on execution_timestamp before merging. Without
+            # this, duplicate timestamps for the same segment turn the join below
+            # into a many-to-many merge that can multiply row counts unexpectedly
+            # (and, on a real feed with repeated readings, hang or blow up memory).
             def _build_pair_series(flyover_seg, downstream_seg):
                 fl = (df_fetched.loc[df_fetched['shapefile_segment_name'] == flyover_seg,
                                       ['execution_timestamp', 'travel_time_index_tti']]
@@ -5538,19 +5557,7 @@ def main():
                                       ['execution_timestamp', 'travel_time_index_tti']]
                       .drop_duplicates(subset='execution_timestamp')
                       .rename(columns={'travel_time_index_tti': 'downstream_tti'}))
-
-                fl['execution_timestamp'] = pd.to_datetime(fl['execution_timestamp'])
-                ds['execution_timestamp'] = pd.to_datetime(ds['execution_timestamp'])
-                fl = fl.sort_values('execution_timestamp')
-                ds = ds.sort_values('execution_timestamp')
-
-                merged = pd.merge_asof(
-                    fl, ds,
-                    on='execution_timestamp',
-                    direction='nearest',
-                    tolerance=PAIR_MERGE_TOLERANCE,
-                )
-                return merged.dropna(subset=['flyover_tti', 'downstream_tti'])
+                return pd.merge(fl, ds, on='execution_timestamp', how='inner')
 
             pair_records = []
             pair_series_map = {}
@@ -5579,6 +5586,7 @@ def main():
                     'flyover_congestion_rate': merged['flyover_congested'].mean(),
                     'downstream_congestion_rate': merged['downstream_congested'].mean(),
                     'displacement_rate': merged['displacement_event'].mean(),
+                    # conditional probabilities -- the clean statistical proof
                     'p_downstream_congested_given_flyover_free': merged.loc[~merged['flyover_congested'], 'downstream_congested'].mean() if sum(~merged['flyover_congested']) > 0 else 0,
                     'p_downstream_congested_given_flyover_congested': merged.loc[merged['flyover_congested'], 'downstream_congested'].mean() if sum(merged['flyover_congested']) > 0 else 0,
                 })
@@ -5649,6 +5657,7 @@ def main():
 
                 # --------------------------------------------------------------
                 # MACHINE LEARNING CROSS-CHECK: Random Forest Classifier
+                # Evaluating the SPECIFIC sequential relationship.
                 # --------------------------------------------------------------
                 st.write("---")
                 section_title("Machine Learning Cross-Check: Sequential Displacement Model")
@@ -5660,25 +5669,31 @@ def main():
                 )
 
                 pooled = pd.concat(pair_series_map.values(), ignore_index=True)
-                
-                # Check if there are enough pooled pairs to run the ML model
+                pooled['hour'] = pd.to_datetime(pooled['execution_timestamp']).dt.hour
+                pooled['hour_sin'] = np.sin(2 * np.pi * pooled['hour'] / 24.0)
+                pooled['hour_cos'] = np.cos(2 * np.pi * pooled['hour'] / 24.0)
+                pooled['flyover_congested_f'] = pooled['flyover_congested'].astype(float)
+                pooled['flyover_tti_f'] = pooled['flyover_tti'].astype(float)
+
+                feat_cols_h7 = ['flyover_congested_f', 'flyover_tti_f', 'hour_sin', 'hour_cos']
+                feat_labels_h7 = ['Flyover congested (0/1)', 'Flyover TTI', 'Hour (sin)', 'Hour (cos)']
+
+                X_h7 = pooled[feat_cols_h7]
+                y_h7 = pooled['downstream_congested'].astype(int)
+
                 if len(pooled) > 50:
-                    pooled['hour'] = pd.to_datetime(pooled['execution_timestamp']).dt.hour
-                    pooled['hour_sin'] = np.sin(2 * np.pi * pooled['hour'] / 24.0)
-                    pooled['hour_cos'] = np.cos(2 * np.pi * pooled['hour'] / 24.0)
-                    pooled['flyover_congested_f'] = pooled['flyover_congested'].astype(float)
-                    pooled['flyover_tti_f'] = pooled['flyover_tti'].astype(float)
-
-                    feat_cols_h7 = ['flyover_congested_f', 'flyover_tti_f', 'hour_sin', 'hour_cos']
-                    feat_labels_h7 = ['Flyover congested (0/1)', 'Flyover TTI', 'Hour (sin)', 'Hour (cos)']
-
-                    X_h7 = pooled[feat_cols_h7]
-                    y_h7 = pooled['downstream_congested'].astype(int)
-
                     try:
                         from sklearn.ensemble import RandomForestClassifier
                         from sklearn.model_selection import cross_val_score, StratifiedKFold
 
+                        # FIX 2a: guard the class balance BEFORE calling cross_val_score.
+                        # cv=5 with StratifiedKFold throws ValueError ("n_splits=5 cannot
+                        # be greater than the number of members in each class") whenever
+                        # the rarer class (usually 'downstream_congested'==True, since it's
+                        # thresholded at the 90th percentile) has fewer than 5 members in
+                        # the pooled set — a very plausible case with few pairs / a small
+                        # feed. That ValueError previously propagated uncaught (the except
+                        # block only caught ImportError) and crashed the whole tab.
                         n_pos = int(y_h7.sum())
                         n_neg = int(len(y_h7) - n_pos)
                         min_class_count = min(n_pos, n_neg)
@@ -5691,6 +5706,7 @@ def main():
                                 "flyover/downstream tagging is picking up more than a handful of pairs."
                             )
                         else:
+                            # Never ask for more folds than the rarer class can support.
                             n_folds = max(2, min(5, min_class_count))
                             cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
 
@@ -5726,7 +5742,7 @@ def main():
 
                             if top_predictor in ('Flyover congested (0/1)', 'Flyover TTI'):
                                 render_callout(
-                                    f"<b>Sequential displacement confirmed:</b> the flyover's own status is the "
+                                    f"📐 <b>Sequential displacement confirmed:</b> the flyover's own status is the "
                                     f"top predictor of downstream exit congestion (CV AUC {cv_scores.mean():.3f}), "
                                     "ahead of time-of-day. This is direct, model-validated evidence that the flyover-exit pair "
                                     "shares a displacement relationship rather than the exit failing independently.",
@@ -5734,7 +5750,7 @@ def main():
                                 )
                             else:
                                 render_callout(
-                                    f"<b>No strong sequential displacement signal:</b> time-of-day predicts downstream exit "
+                                    f"📐 <b>No strong sequential displacement signal:</b> time-of-day predicts downstream exit "
                                     "congestion better than the paired flyover's own status — suggesting the exit's congestion "
                                     "is driven mainly by its own local demand pattern, not by the flyover pushing load onto it.",
                                     border_color="#3498db"
@@ -5743,8 +5759,10 @@ def main():
                     except ImportError:
                         st.warning("`scikit-learn` is not installed in your environment. The Random Forest classification cross-check has been bypassed. Run `pip install scikit-learn` to enable this module.")
                     except Exception as e:
+                        # FIX 2b: catch-all so any other model-fitting edge case
+                        # (degenerate features, singular matrix, etc.) degrades this
+                        # one section instead of crashing the whole tab.
                         st.warning(f"The ML cross-check could not be fit on this pooled dataset ({type(e).__name__}: {e}). The rest of this tab is unaffected.")
-                
                 else:
                     st.info("Not enough paired intervals to fit a reliable cross-validated model on this dataset.")
 
