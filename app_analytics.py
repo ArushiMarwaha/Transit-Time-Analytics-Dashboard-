@@ -5527,6 +5527,21 @@ def main():
             # this, duplicate timestamps for the same segment turn the join below
             # into a many-to-many merge that can multiply row counts unexpectedly
             # (and, on a real feed with repeated readings, hang or blow up memory).
+            #
+            # FIX 2: use merge_asof with a tolerance window instead of an exact-match
+            # merge. Flyover and downstream segments are often polled/logged at
+            # slightly different timestamps (different jobs, sub-second jitter), so
+            # an exact merge on execution_timestamp was matching almost nothing —
+            # every pair silently fell below the 20-interval minimum. merge_asof
+            # pairs each flyover reading with the nearest downstream reading within
+            # a tolerance window, which reflects "same traffic moment" more realistically.
+            
+            try:
+                median_gap = df_fetched.sort_values('execution_timestamp')['execution_timestamp'].diff().median()
+                PAIR_MERGE_TOLERANCE = pd.Timedelta(median_gap) if pd.notna(median_gap) else pd.Timedelta('5min')
+            except Exception:
+                PAIR_MERGE_TOLERANCE = pd.Timedelta('5min')
+
             def _build_pair_series(flyover_seg, downstream_seg):
                 fl = (df_fetched.loc[df_fetched['shapefile_segment_name'] == flyover_seg,
                                       ['execution_timestamp', 'travel_time_index_tti']]
@@ -5536,7 +5551,19 @@ def main():
                                       ['execution_timestamp', 'travel_time_index_tti']]
                       .drop_duplicates(subset='execution_timestamp')
                       .rename(columns={'travel_time_index_tti': 'downstream_tti'}))
-                return pd.merge(fl, ds, on='execution_timestamp', how='inner')
+
+                fl['execution_timestamp'] = pd.to_datetime(fl['execution_timestamp'])
+                ds['execution_timestamp'] = pd.to_datetime(ds['execution_timestamp'])
+                fl = fl.sort_values('execution_timestamp')
+                ds = ds.sort_values('execution_timestamp')
+
+                merged = pd.merge_asof(
+                    fl, ds,
+                    on='execution_timestamp',
+                    direction='nearest',
+                    tolerance=PAIR_MERGE_TOLERANCE,
+                )
+                return merged.dropna(subset=['flyover_tti', 'downstream_tti'])
 
             pair_records = []
             pair_series_map = {}
@@ -5665,14 +5692,6 @@ def main():
                         from sklearn.ensemble import RandomForestClassifier
                         from sklearn.model_selection import cross_val_score, StratifiedKFold
 
-                        # FIX 2a: guard the class balance BEFORE calling cross_val_score.
-                        # cv=5 with StratifiedKFold throws ValueError ("n_splits=5 cannot
-                        # be greater than the number of members in each class") whenever
-                        # the rarer class (usually 'downstream_congested'==True, since it's
-                        # thresholded at the 90th percentile) has fewer than 5 members in
-                        # the pooled set — a very plausible case with few pairs / a small
-                        # feed. That ValueError previously propagated uncaught (the except
-                        # block only caught ImportError) and crashed the whole tab.
                         n_pos = int(y_h7.sum())
                         n_neg = int(len(y_h7) - n_pos)
                         min_class_count = min(n_pos, n_neg)
@@ -5738,9 +5757,6 @@ def main():
                     except ImportError:
                         st.warning("`scikit-learn` is not installed in your environment. The Random Forest classification cross-check has been bypassed. Run `pip install scikit-learn` to enable this module.")
                     except Exception as e:
-                        # FIX 2b: catch-all so any other model-fitting edge case
-                        # (degenerate features, singular matrix, etc.) degrades this
-                        # one section instead of crashing the whole tab.
                         st.warning(f"The ML cross-check could not be fit on this pooled dataset ({type(e).__name__}: {e}). The rest of this tab is unaffected.")
                 else:
                     st.info("Not enough paired intervals to fit a reliable cross-validated model on this dataset.")
