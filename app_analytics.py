@@ -263,16 +263,16 @@ def _fetch_segments_ref() -> Optional[pd.DataFrame]:
 def _fetch_corridor_coordinates() -> Optional[pd.DataFrame]:
     """Static `corridor_coordinates.csv` reference table -- carries the
     verified `network_layer_type` tag (flyover vs at-grade) per segment,
-    keyed on `shapefile_segment_name`. Fetched remote-first from GitHub raw,
-    falling back to the local `data_store/corridor_coordinates.csv` mirror,
-    identically to `segments_ref`/`roads_results`. Returns None if the file
-    is unreachable or doesn't contain the columns this needs, so callers can
-    fall back cleanly to whatever heuristic they'd otherwise use."""
+    keyed on `segment_uid` (this file has no `shapefile_segment_name`
+    column -- only `Shapefile_Name`, which is a display label, not the
+    join key). Fetched remote-first from GitHub raw, falling back to the
+    local `data_store/corridor_coordinates.csv` mirror. Returns None if
+    the file is unreachable or doesn't contain the columns this needs."""
     remote_df = _http_get_csv(CORRIDOR_COORDINATES_URL)
     df = remote_df if remote_df is not None else _local_get_csv(CORRIDOR_COORDINATES_LOCAL_PATH)
-    if df is None or 'shapefile_segment_name' not in df.columns or 'network_layer_type' not in df.columns:
+    if df is None or 'segment_uid' not in df.columns or 'network_layer_type' not in df.columns:
         return None
-    return df[['shapefile_segment_name', 'network_layer_type']].drop_duplicates(subset=['shapefile_segment_name'])
+    return df[['segment_uid', 'network_layer_type']].drop_duplicates(subset=['segment_uid'])
 
 def _collapse_to_one_row_per_segment(df: pd.DataFrame) -> pd.DataFrame:
     """`roads_results` is written by the automation pipeline as a repeated,
@@ -5487,7 +5487,7 @@ def main():
             "flyover is flowing freely while the very next segment is failing."
         )
         render_callout(
-            "🛣️ <b>Reading the displacement rate:</b> a high displacement rate for a flyover-to-exit pair is direct, "
+            " <b>Reading the displacement rate:</b> a high displacement rate for a flyover-to-exit pair is direct, "
             "sequential evidence the flyover relocates its jam rather than eliminating it. A low rate means the "
             "flyover's free flow genuinely does not push extra load onto its immediate downstream exit.",
             border_color="#3498db"
@@ -5497,7 +5497,7 @@ def main():
         if 'network_layer_type' not in df_fetched.columns:
             _corridor_coords_df = _fetch_corridor_coordinates()
             if _corridor_coords_df is not None:
-                df_fetched = df_fetched.merge(_corridor_coords_df, on='shapefile_segment_name', how='left')
+                df_fetched = df_fetched.merge(_corridor_coords_df, on='segment_uid', how='left')
 
         if 'network_layer_type' not in df_fetched.columns or df_fetched['network_layer_type'].isna().all():
             df_fetched['shapefile_segment_name_lower'] = df_fetched['shapefile_segment_name'].astype(str).str.lower()
