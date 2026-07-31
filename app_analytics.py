@@ -177,6 +177,7 @@ ROADS_RESULTS_URL = f"{GITHUB_RAW_BASE_URL}/roads_results.csv"
 ROUTES_RESULTS_DIR_URL = f"{GITHUB_RAW_BASE_URL}/routes_results"
 WEATHER_RESULTS_DIR_URL = f"{GITHUB_RAW_BASE_URL}/weather_results"
 AQI_RESULTS_DIR_URL = f"{GITHUB_RAW_BASE_URL}/aqi_results"
+CORRIDOR_COORDINATES_URL = f"{GITHUB_RAW_BASE_URL}/corridor_coordinates.csv"
 
 # Local-disk mirrors of the same layout, used as the fallback ingestion trail
 # whenever the GitHub raw endpoint 404s (e.g. the automation pipeline hasn't
@@ -187,6 +188,7 @@ ROADS_RESULTS_LOCAL_PATH = os.path.join(LOCAL_DATA_STORE_DIR, "roads_results.csv
 ROUTES_RESULTS_LOCAL_DIR = os.path.join(LOCAL_DATA_STORE_DIR, "routes_results")
 WEATHER_RESULTS_LOCAL_DIR = os.path.join(LOCAL_DATA_STORE_DIR, "weather_results")
 AQI_RESULTS_LOCAL_DIR = os.path.join(LOCAL_DATA_STORE_DIR, "aqi_results")
+CORRIDOR_COORDINATES_LOCAL_PATH = os.path.join(LOCAL_DATA_STORE_DIR, "corridor_coordinates.csv")
 
 # Strict as-of join tolerance for binding the ~3-hourly environmental frames
 # (weather_results / aqi_results) onto the cycle-by-cycle routes_results rows.
@@ -256,7 +258,21 @@ def _fetch_segments_ref() -> Optional[pd.DataFrame]:
         df = df.drop_duplicates(subset=["segment_uid"]).reset_index(drop=True)
 
     return df
-
+    
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_corridor_coordinates() -> Optional[pd.DataFrame]:
+    """Static `corridor_coordinates.csv` reference table -- carries the
+    verified `network_layer_type` tag (flyover vs at-grade) per segment,
+    keyed on `shapefile_segment_name`. Fetched remote-first from GitHub raw,
+    falling back to the local `data_store/corridor_coordinates.csv` mirror,
+    identically to `segments_ref`/`roads_results`. Returns None if the file
+    is unreachable or doesn't contain the columns this needs, so callers can
+    fall back cleanly to whatever heuristic they'd otherwise use."""
+    remote_df = _http_get_csv(CORRIDOR_COORDINATES_URL)
+    df = remote_df if remote_df is not None else _local_get_csv(CORRIDOR_COORDINATES_LOCAL_PATH)
+    if df is None or 'shapefile_segment_name' not in df.columns or 'network_layer_type' not in df.columns:
+        return None
+    return df[['shapefile_segment_name', 'network_layer_type']].drop_duplicates(subset=['shapefile_segment_name'])
 
 def _collapse_to_one_row_per_segment(df: pd.DataFrame) -> pd.DataFrame:
     """`roads_results` is written by the automation pipeline as a repeated,
